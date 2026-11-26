@@ -645,6 +645,12 @@ operational('questions/services/{serviceId}/configuration','get','questions','ge
   'StageConfiguration',{stages:[{id:ids.stage,name:'Recepção'}],questions:[]},
   {parameters:[idParameter('serviceId',ids.service,'UUID do serviço.') ]});
 
+
+operational('admin/services/{id}/stages','put','services','configureServiceStages','Configurar etapas de um serviço',
+  'Exige users.manage. Envie UUIDs distintos de etapas ativas na ordem de apresentação. Uma lista vazia desativa os vínculos da jornada e preserva os questionários já iniciados.',
+  'JourneyStages',{stageIds:[ids.stage]},{parameters:[idParameter('id',ids.service,'UUID do serviço.')],
+    requestBody:body('JourneyStages',{stageIds:[ids.stage]}),errors:{404:error('Serviço inexistente.'),409:error('Serviço arquivado.')}});
+
 export default {
   openapi: '3.0.3',
   info: {

@@ -226,6 +226,7 @@ Object.assign(schemas, {
   ProfileRecord: object({ id: uuid, ...accessFields }, ['id','role','sectorIds']),
   ProfileCreate: object({ ...accessFields, name:{type:'string',minLength:2,maxLength:150},email:{...email,maxLength:255},
     password:{type:'string',format:'password',minLength:12,description:'Até 72 bytes em UTF-8.'} }, ['role','sectorIds','name','email','password']),
+  JourneyStages: object({ stageIds:{...list(uuid),maxItems:50,uniqueItems:true} }, ['stageIds']),
   RosterStaffInput: object(rosterStaff, ['sectorId','name']),
   RosterStaff: sectorNamed,
   RosterOptions: object({ sectors:list(ref('Shift')), shifts:list(ref('Shift')), teams:list(sectorNamed), staff:list(sectorNamed) }, ['sectors','shifts','teams','staff']),

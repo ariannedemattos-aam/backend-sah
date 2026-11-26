@@ -60,6 +60,11 @@ try {
     await pool.execute('INSERT INTO stages(id,name) VALUES (?,?)',[id,slug+'-etapa-'+index]);
     await pool.execute('INSERT INTO service_stages(id,service_id,stage_id,display_order) VALUES(UUID(),?,?,?)',[targets.service,id,index]);
   }
+  const configured='/admin/services/'+targets.service+'/stages';
+  if(process.env.FHOOD_TEST_SERVICE_STAGE_EDITOR==='1'){
+    await request('PUT',configured,422,{stageIds:[targets.stages[0],targets.stages[0]]},jwt);
+    await request('PUT',configured,200,{stageIds:[targets.stages[0],targets.stages[1]]},jwt);
+  }
   step='perfis e escopo';
   const accounts={userAdmin:admin};
   for (const role of ['userSetor','gestao','ouvidoria','visualizador']) {
@@ -83,6 +88,11 @@ try {
   ];
   for(const [route,allowed] of matrix) await Promise.all(Object.entries(accounts).map(([role,session])=>
     request('GET',route,allowed.includes(role)?200:403,undefined,session.accessToken)));
+  if(process.env.FHOOD_TEST_SERVICE_STAGE_EDITOR==='1'){
+    await request('PUT',configured,403,{stageIds:[]},accounts.userSetor.accessToken);
+    const ordered=(await request('GET','/public/services/'+targets.service+'/stages',200)).data;
+    assert.deepEqual(ordered.map(item=>item.id),targets.stages);
+  }
   const first=accounts.userSetor.accessToken, occ=accounts.ouvidoria.accessToken, manager=accounts.gestao.accessToken;
   await request('GET','/admin/roster?month='+date.slice(0,7)+'&sectorId='+targets.other,403,undefined,first);
   await request('POST','/admin/roster/staff',403,{sectorId:targets.other,name:'Fictício de outro setor'},first);
@@ -132,6 +142,8 @@ try {
   await survey.call('POST','/complete',200,{overallRating:2});
   await survey.call('POST','/complete',200,{overallRating:9});
   step='fila e retorno';
+  const savedDetail=(await request('GET','/admin/evaluations/'+survey.id,200,undefined,manager)).data;
+  assert.ok(!savedDetail.answers.some(row=>row.id===child.id));
   const anonymous=(await request('GET','/admin/ombudsman?priority=high&sectorId='+targets.sector,200,undefined,occ)).data[0];
   assert.equal(anonymous.overallRating,2);
   assert.equal(anonymous.returnId,null);

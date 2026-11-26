@@ -33,6 +33,7 @@ router.post('/users/accounts', manage, asyncRoute(accounts.create));
 router.get('/users/:id/access', manage, asyncRoute(accounts.get));
 router.put('/users/:id/access', manage, asyncRoute(accounts.update));
 
+router.put('/services/:id/stages', manage, asyncRoute(admin.setServiceStages));
 router.get('/analysis/options', analysisAccess, asyncRoute(evaluation.options));
 router.get('/evaluations', surveys, noStore, asyncRoute(evaluation.list));
 router.get('/evaluations/:id', surveys, noStore, asyncRoute(evaluation.detail));

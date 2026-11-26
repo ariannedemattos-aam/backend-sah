@@ -151,6 +151,31 @@ export async function setStatus(req, res, resource) {
   ok(res, { id, active }, active ? 'Registro reativado.' : 'Registro arquivado.');
 }
 
+
+export async function setServiceStages(req, res) {
+  const id = z.string().uuid().parse(req.params.id);
+  const { stageIds } = z.object({
+    stageIds: z.array(z.string().uuid()).max(50).refine(values => new Set(values).size === values.length, 'Etapas duplicadas.'),
+  }).parse(req.body);
+  await withTransaction(async connection => {
+    const service = await requireCatalogEntry(connection, 'services', id, true);
+    if (!service.is_active) throw new AppError('Reative o serviço antes de editar suas etapas.', 409);
+    if (stageIds.length) {
+      const [active] = await connection.execute(
+        'SELECT id FROM stages WHERE is_active=1 AND id IN (' + stageIds.map(() => '?').join(',') + ') FOR SHARE', stageIds,
+      );
+      if (active.length !== stageIds.length) throw new AppError('Selecione somente etapas ativas.', 422);
+    }
+    await connection.execute('UPDATE service_stages SET is_active=0 WHERE service_id=? AND is_active=1', [id]);
+    for (const [index, stage] of stageIds.entries()) {
+      const order = index + 1;
+      await connection.execute('INSERT INTO service_stages (id,service_id,stage_id,display_order,is_required,is_active) '
+        + 'VALUES (UUID(),?,?,?,0,1) ON DUPLICATE KEY UPDATE display_order=?,is_active=1', [id, stage, order, order]);
+    }
+  });
+  ok(res, { stageIds }, 'Etapas da jornada atualizadas.');
+}
+
 export async function overview(req, res) {
   ok(res, await summary(pool, selections(filtersSchema.parse(req.query), req.user)));
 }

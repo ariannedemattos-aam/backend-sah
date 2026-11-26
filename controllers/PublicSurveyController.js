@@ -152,10 +152,12 @@ export async function start(req, res) {
     if (!attendance) throw new AppError('Adicione um atendimento antes de iniciar a pesquisa.', 422);
     await conn.execute(
       'INSERT INTO survey_questions (id,survey_id,attendance_id,question_id,question_version_id,prompt_snapshot,type_snapshot,required_snapshot,display_order) '
-        + 'SELECT UUID(), a.survey_id,a.id,q.id,qv.id,qv.prompt,q.type,0,qa.display_order '
+        + 'SELECT UUID(),a.survey_id,a.id,q.id,qv.id,qv.prompt,q.type,0,'
+        + 'ROW_NUMBER() OVER (ORDER BY a.created_at,a.id,COALESCE(ss.display_order,0),qa.display_order,qa.id) '
         + 'FROM survey_attendances a JOIN question_assignments qa ON (qa.sector_id=a.sector_id OR qa.sector_id IS NULL) '
         + "AND (qa.service_id=a.service_id OR qa.service_id IS NULL) AND qa.is_active=1 JOIN questions q ON q.id=qa.question_id AND q.status='active' "
         + 'JOIN question_versions qv ON qv.question_id=q.id AND qv.version=q.current_version '
+        + 'LEFT JOIN service_stages ss ON ss.service_id=a.service_id AND ss.stage_id=q.stage_id AND ss.is_active=1 '
         + 'LEFT JOIN attendance_journeys j ON j.attendance_id=a.id LEFT JOIN attendance_journey_stages js ON js.attendance_id=a.id AND js.stage_id=q.stage_id '
         + 'WHERE a.survey_id=? AND (j.attendance_id IS NULL OR q.stage_id IS NULL OR js.stage_id IS NOT NULL)',
       [survey.id],
