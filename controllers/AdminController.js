@@ -75,6 +75,10 @@ async function validateLinks(connection, resource, entry, previous) {
     const [[service]] = await connection.execute('SELECT sector_id FROM services WHERE id=? FOR UPDATE', [entry.service_id]);
     if (service?.sector_id !== entry.sector_id) throw new AppError('O serviço deve pertencer ao setor informado.', 422);
   }
+  if (resource === 'teams' && previous && previous.sector_id !== (entry.sector_id ?? null)) {
+    const [[link]] = await connection.execute('SELECT 1 FROM roster_shifts WHERE team_id=? LIMIT 1', [previous.id]);
+    if (link) throw new AppError('Uma equipe vinculada a escalas deve permanecer no setor original.', 409);
+  }
   if (resource === 'services' && previous && previous.sector_id !== (entry.sector_id ?? null)) {
     const [[dependencies]] = await connection.execute(
       'SELECT EXISTS(SELECT 1 FROM survey_attendances WHERE service_id=?) AS attendance, '

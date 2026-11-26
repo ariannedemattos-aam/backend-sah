@@ -5,6 +5,7 @@ import pool from '../config/database.js';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/errors.js';
 import { withTransaction } from '../utils/withTransaction.js';
+import { profilePermissions } from './Profiles.js';
 import { disconnectSession } from './SocketService.js';
 
 const issuer = 'fhdod-api';
@@ -18,7 +19,8 @@ const permissionsSql = '(SELECT JSON_ARRAYAGG(p.name) FROM permissions p WHERE '
   + 'OR EXISTS (SELECT 1 FROM user_permissions up WHERE up.user_id=u.id AND up.permission_id=p.id)) AS permissions';
 const identitySql = 'u.id,u.name,u.email,r.name role,u.is_active,' + permissionsSql;
 const formatUser = ({ id, name, email, role, is_active }) => ({ id, name, email, role, is_active });
-const permissionsOf = user => Array.isArray(user.permissions) ? user.permissions : [];
+const permissionsOf = user => Array.isArray(user.permissions) && Object.hasOwn(profilePermissions, user.role)
+  ? user.permissions.filter(permission => profilePermissions[user.role].includes(permission)) : [];
 const jwtOptions = (audience) => ({ algorithm: 'HS256', issuer, audience });
 
 function verifyToken(token, secret, audience, type) {
@@ -39,7 +41,7 @@ function signRefresh(userId, sid, expiresAt) {
 function packageSession(user, sid, refreshToken, expiresAt) {
   const accessToken = jwt.sign({ sub: user.id, sid, typ: 'access', role: user.role, permissions: permissionsOf(user) },
     env.jwtSecret, { ...jwtOptions(accessAudience), expiresIn: env.jwtExpiresIn });
-  return { user: formatUser(user), accessToken, refreshToken, expiresAt };
+  return { user: { ...formatUser(user), permissions: permissionsOf(user) }, accessToken, refreshToken, expiresAt };
 }
 
 export async function login(email, password) {

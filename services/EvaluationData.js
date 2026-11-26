@@ -40,6 +40,7 @@ export const feedbackListSchema = reportFilters.extend({
 export const returnStatuses = ['open', 'in_progress', 'closed'];
 export const returnListSchema = z.object({
   ...pagination,
+  requestId: identifier.optional(),
   from: z.string().date().optional(),
   to: z.string().date().optional(),
   status: z.enum(returnStatuses).optional(),
@@ -71,12 +72,13 @@ export function attendanceFilter(filters, user) {
 
 function ratingFilter(filters) {
   const conditions = [], params = [];
-  if (filters.stageId) { conditions.push('qq.stage_id=?'); params.push(filters.stageId); }
+  if (filters.stageId) { conditions.push('COALESCE(qc.stage_id,qq.stage_id)=?'); params.push(filters.stageId); }
   if (filters.score !== undefined) { conditions.push('x.rating_value=?'); params.push(filters.score); }
   return { conditions, params };
 }
 
-const answerJoin = 'JOIN survey_questions q ON q.attendance_id=a.id JOIN answers x ON x.survey_question_id=q.id LEFT JOIN questions qq ON qq.id=q.question_id';
+const answerJoin = 'JOIN survey_questions q ON q.attendance_id=a.id JOIN answers x ON x.survey_question_id=q.id AND (x.rating_value IS NOT NULL OR NULLIF(x.text_value,\'\') IS NOT NULL) '
+  + 'LEFT JOIN questions qq ON qq.id=q.question_id LEFT JOIN survey_question_context qc ON qc.question_id=q.id';
 const catalogJoin = ' JOIN sectors se ON se.id=a.sector_id JOIN services sv ON sv.id=a.service_id';
 const and = (conditions) => conditions.length ? ' AND ' + conditions.join(' AND ') : '';
 
@@ -92,7 +94,7 @@ export function selections(filters, user, { exclusive = false } = {}) {
   if (attendance.conditions.length || rating.conditions.length) {
     conditions.push('EXISTS (SELECT 1 FROM survey_attendances a '
       + (rating.conditions.length ? answerJoin : '')
-      + ' WHERE a.survey_id=s.id' + and([...attendance.conditions, ...rating.conditions]) + ')');
+      + ' WHERE a.survey_id=s.id' + and([...attendance.conditions, ...rating.conditions, ...(rating.conditions.length ? ['COALESCE(qc.visible,1)=1'] : [])]) + ')');
     params.push(...attendance.params, ...rating.params);
   }
   if (filters.search) {
@@ -107,7 +109,7 @@ export function selections(filters, user, { exclusive = false } = {}) {
   }
   const cte = 'WITH selected AS (SELECT s.id,s.completed_at,s.overall_rating FROM surveys s WHERE ' + conditions.join(' AND ') + ')';
   const answerContext = ' FROM selected m JOIN survey_attendances a ON a.survey_id=m.id ' + answerJoin;
-  const answerConditions = [...attendance.conditions, ...rating.conditions];
+  const answerConditions = [...attendance.conditions, ...rating.conditions, 'COALESCE(qc.visible,1)=1'];
   return {
     cte, params, attendance, rating, answerContext, answerConditions,
     answerParams: [...params, ...attendance.params, ...rating.params],
@@ -118,7 +120,7 @@ export const dimensions = {
   sectors: { column: 'se', label: 'Setores', join: 'JOIN sectors se ON se.id=a.sector_id' },
   services: { column: 'sv', label: 'Serviços', join: 'JOIN services sv ON sv.id=a.service_id' },
   teams: { column: 'tm', label: 'Equipes', join: 'JOIN teams tm ON tm.id=qq.team_id' },
-  stages: { column: 'st', label: 'Etapas', join: 'JOIN stages st ON st.id=qq.stage_id' },
+  stages: { column: 'st', label: 'Etapas', join: 'JOIN stages st ON st.id=IF(qc.question_id IS NULL,qq.stage_id,qc.stage_id)' },
   shifts: { column: 'sh', label: 'Turnos', join: 'JOIN shifts sh ON sh.id=a.shift_id' },
 };
 export const where = (conditions) => conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';

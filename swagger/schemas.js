@@ -29,7 +29,7 @@ export const schemas = {
   Login: object({ email: { ...email, maxLength: 255 }, password: { type: 'string', minLength: 8, format: 'password', description: 'Até 72 bytes em UTF-8.' } }, ['email', 'password']),
   Refresh: object({ refreshToken: { ...token, minLength: 20, maxLength: 4096 } }, ['refreshToken']),
   User: object({
-    ...named, email, role: { type: 'string', example: 'userSetor' }, is_active: flag,
+    ...named, email, role: { type: 'string', example: 'userSetor' }, is_active: flag, permissions: list(string),
   }, ['id', 'name', 'email', 'role']),
   Identity: {
     allOf: [ref('User'), object({ permissions: list(string) }, ['permissions'])],
@@ -53,6 +53,7 @@ export const schemas = {
   }, ['id', 'status', 'createdAt', 'completedAt']),
   Attendance: object({
     sectorId: uuid, serviceId: uuid, shiftId: uuid, attendanceDate: nullable({ type: 'string', format: 'date' }),
+    stageIds: { ...list(uuid), maxItems:50, uniqueItems:true, description:'Etapas realizadas. Lista vazia pula todas as etapas específicas. Omita para clientes anteriores.' },
     attendanceKey: { ...uuid, description: 'UUID do dispositivo para repetir o mesmo cadastro sem duplicá-lo.' },
   }, ['sectorId', 'serviceId', 'shiftId']),
   SurveyQuestion: object({
@@ -174,12 +175,13 @@ export const schemas = {
   AdminRole: object(catalogBase),
   AdminPermission: object({ ...catalogBase, description: nullable(string) }),
   QuestionContent: object({
+    rule: nullable(object({ questionId: uuid, value:{ ...string,minLength:1,maxLength:100 } }, ['questionId','value'])),
     prompt: { ...string, minLength: 10, maxLength: 500 },
     type: questionType,
     required: { type: 'boolean', default: false },
     options: { type: 'array', items: { ...string, minLength: 1, maxLength: 100 }, minItems: 2, maxItems: 10, uniqueItems: true },
   }, ['prompt', 'type']),
-  QuestionInput: { allOf: [ref('QuestionContent'), object({ serviceId: uuid }, ['serviceId'])] },
+  QuestionInput: { allOf: [ref('QuestionContent'), object({ serviceId: uuid, stageId: nullable(uuid) }, ['serviceId'])] },
   QuestionEdit: {
     allOf: [ref('QuestionContent'), object({
       version: { type: 'integer', minimum: 1 }, changeReason: { ...string, minLength: 3, maxLength: 500 },
@@ -193,10 +195,51 @@ export const schemas = {
       prompt: string, type: questionType, required: nullable(flag), createdAt: timestamp, services: nullable(string), canEdit: { type: 'boolean' },
     }, ['prompt', 'type', 'required', 'createdAt', 'services', 'canEdit'])],
   },
-  QuestionDetail: { allOf: [ref('QuestionEntry'), object({ options: list(string) }, ['options'])] },
+  QuestionDetail: { allOf: [ref('QuestionEntry'), object({
+    options: list(string), stageId: nullable(uuid), serviceId: nullable(uuid), position: nullable(count),
+    rule: nullable(object({ questionId: uuid, value: string }, ['questionId','value'])),
+  }, ['options'])] },
   QuestionReview: object({ justification: { ...string, minLength: 3, maxLength: 500 } }, ['justification']),
   TvOverview: object({ responses: count, averageRating: average }, ['responses', 'averageRating']),
   TvSector: {
     allOf: [ref('TvOverview'), object({ name: string }, ['name'])],
   },
 };
+
+const visitState = { type: 'string', enum: ['open','in_progress','closed'] };
+const priority = { type: 'string', enum: ['normal','high'] };
+const date = { type: 'string', format: 'date' };
+const sectorNamed = object({ ...named, sectorId: uuid }, ['id','name','sectorId']);
+const accessFields = {
+  role: { type: 'string', enum: ['userAdmin','userSetor','gestao','ouvidoria','visualizador'] },
+  sectorIds: { ...list(uuid), maxItems: 100, uniqueItems: true },
+};
+const rosterStaff = { sectorId: uuid, name: { type:'string', minLength:2, maxLength:120 } };
+const rosterKey = { sectorId: uuid, date, shiftId: uuid, teamId: uuid };
+const caseFields = {
+  id:uuid, status:visitState, priority, createdAt:timestamp,
+  overallRating:nullable({ type:'integer',minimum:0,maximum:10 }), returnId:nullable(uuid),
+  returnStatus:nullable(visitState), hasComplaint:flag, sectors:nullable(string),
+};
+Object.assign(schemas, {
+  ProfileAccess: object(accessFields, ['role','sectorIds']),
+  ProfileRecord: object({ id: uuid, ...accessFields }, ['id','role','sectorIds']),
+  ProfileCreate: object({ ...accessFields, name:{type:'string',minLength:2,maxLength:150},email:{...email,maxLength:255},
+    password:{type:'string',format:'password',minLength:12,description:'Até 72 bytes em UTF-8.'} }, ['role','sectorIds','name','email','password']),
+  RosterStaffInput: object(rosterStaff, ['sectorId','name']),
+  RosterStaff: sectorNamed,
+  RosterOptions: object({ sectors:list(ref('Shift')), shifts:list(ref('Shift')), teams:list(sectorNamed), staff:list(sectorNamed) }, ['sectors','shifts','teams','staff']),
+  RosterShiftInput: object({ ...rosterKey, staffIds:{...list(uuid),maxItems:50,uniqueItems:true} }, ['sectorId','date','shiftId','teamId','staffIds']),
+  RosterShift: object({ ...rosterKey, sector:string, team:string, shift:string, staff:list(ref('Shift')) }, ['sectorId','date','shiftId','teamId','sector','team','shift','staff']),
+  RosterIndicator: object({ id:uuid, label:string, evaluations:count, averageOverall:average }, ['id','label','evaluations','averageOverall']),
+  OmbudsmanItem: object(caseFields, Object.keys(caseFields)),
+  OmbudsmanDetail: object({ ...caseFields, complaint:nullable(string), history:list(object({
+    id:uuid, previousStatus:visitState, status:visitState, priority, note:string, createdAt:timestamp, actor:string,
+  })) }, [...Object.keys(caseFields),'complaint','history']),
+  OmbudsmanAction: object({ status:visitState, priority, note:{type:'string',minLength:3,maxLength:1500} }, ['status','priority','note']),
+  OmbudsmanUpdated: object({ id:uuid, status:visitState, priority }, ['id','status','priority']),
+  StageConfiguration: object({ stages:list(ref('Shift')), questions:list(object({
+    id:uuid, stageId:nullable(uuid), prompt:string, position:count,
+    options:list(object({ value:string,label:string,order:count }, ['value','label','order'])),
+  }, ['id','stageId','prompt','position','options'])) }, ['stages','questions']),
+});

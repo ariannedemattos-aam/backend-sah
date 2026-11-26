@@ -15,6 +15,8 @@ const tags = {
   reports: 'Relatórios e exportações',
   invitations: 'Convites e comunicação',
   notifications: 'Notificações',
+  roster: 'Escalas e equipes',
+  ombudsman: 'Fila da Ouvidoria',
   dashboard: 'Dashboard e indicadores',
   tv: 'Painel de TV',
   health: 'Status e saúde da API',
@@ -256,7 +258,7 @@ surveyOperation('/return-request', 'put', 'returns', 'Registrar pedido de retorn
   }, { operationId: 'saveReturnRequest', requestBody: body('ReturnRequest', { name: 'Pessoa Fictícia', contact: 'retorno@example.invalid', preferredChannel: 'email', message: 'Pedido de demonstração.' }) });
 
 surveyOperation('/complete', 'post', 'answers', 'Finalizar pesquisa de satisfação',
-  'Exige pesquisa em preenchimento e nota geral inteira de 0 a 10. As perguntas do atendimento e o retorno são opcionais. A primeira conclusão emite dashboard:update aos assinantes autorizados. Nota até 6 cria alerta interno de triagem para administradores autorizados, sem dados pessoais. Uma repetição não substitui a nota nem emite outro evento.',
+  'Exige pesquisa em preenchimento e nota geral inteira de 0 a 10. As perguntas do atendimento e o retorno são opcionais. A primeira conclusão emite dashboard:update aos assinantes autorizados. Nota até 6, reclamação ou pedido de retorno cria uma manifestação e um alerta para a equipe autorizada da Ouvidoria, sem incluir dados de contato no aviso. Uma repetição não substitui a nota nem emite outro evento.',
   {
     200: response('Pesquisa finalizada.', noData, null, 'Pesquisa finalizada.'),
     422: error('Nota geral ausente ou inválida.', 'Dados inválidos.'),
@@ -390,7 +392,7 @@ const returnMissing = error('Solicitação inexistente ou fora do escopo.', 'Sol
 add('/api/v1/admin/return-requests', 'get', 'returns', 'Listar solicitações de retorno',
   'Exige return_requests.manage. Inclui solicitações de pesquisas concluídas. A listagem omite nome, contato e mensagem. O período filtra pela data de registro da solicitação.',
   { 200: pageResponse('ReturnItem', { id: returnId, status: 'open', createdAt: '2026-01-15T13:00:00.000Z' }, 'Página de solicitações.'), ...administrativeErrors },
-  { operationId: 'listReturnRequests', security: bearer, parameters: [...periodQueries, ...analysisPaging, statusQuery(['open', 'in_progress', 'closed'])] });
+  { operationId: 'listReturnRequests', security: bearer, parameters: [...periodQueries, ...analysisPaging, statusQuery(['open', 'in_progress', 'closed']), { name:'requestId',in:'query',schema:uuid,example:returnId }] });
 
 add('/api/v1/admin/return-requests/{id}/contact', 'get', 'returns', 'Revelar contato de uma solicitação',
   'Exige return_requests.manage. Exposição sob demanda com registro de auditoria por usuário e solicitação. A resposta usa Cache-Control privado sem armazenamento.',
@@ -580,11 +582,74 @@ add('/api/v1/tvwall/sectors', 'get', 'tv', 'Consultar indicadores por setor no p
     401: error('Token do painel ausente ou incorreto, quando exigido.', 'Token TV Wall inválido.'), 500: failure,
   }, { operationId: 'listTvSectors', security: tvToken });
 
+
+const operational = (path, method, group, operationId, summary, description, schema, example, extra = {}) => {
+  const success = method === 'post' ? 201 : 200;
+  const { errors = {}, ...options } = extra;
+  add('/api/v1/' + path, method, group, summary, description, {
+    [success]: typeof schema === 'string' ? response(summary, ref(schema), example) :
+      schema ?? response(summary, noData, null),
+    ...administrativeErrors, ...errors,
+  }, { operationId, security: bearer, ...options });
+};
+const teamId=fictitiousId(30), staffId=fictitiousId(31), caseId=fictitiousId(32);
+const sectorQuery={name:'sectorId',in:'query',schema:uuid,example:ids.sector,description:'Filtra pelo UUID do setor.'};
+const rosterShift={sectorId:ids.sector,date:'2026-01-15',shiftId:ids.shift,teamId};
+const staffExample={id:staffId,sectorId:ids.sector,name:'Profissional Fictício'};
+const scopedProfile={id:ids.user,role:'userSetor',sectorIds:[ids.sector]};
+const manifestation={id:caseId,status:'open',priority:'high',createdAt:'2026-01-15T13:00:00.000Z',overallRating:4,
+  returnId:null,returnStatus:null,hasComplaint:1,sectors:'Setor Fictício'};
+const caseParam=idParameter('id',caseId,'UUID da manifestação.');
+const missingCase=error('Manifestação inexistente.','Manifestação não encontrada.');
+const profileParam=idParameter('id',ids.user,'UUID do colaborador.');
+const missingProfile=error('Colaborador inexistente.','Usuário não encontrado.');
+operational('admin/roster/options','get','roster','getRosterOptions','Opções da escala','Exige roster.read. O Admin de Setor recebe equipes e profissionais do próprio escopo.',
+  'RosterOptions',{sectors:[{id:ids.sector,name:'Setor Fictício'}],shifts:[{id:ids.shift,name:'Manhã'}],
+    teams:[{id:teamId,name:'Equipe Fictícia',sectorId:ids.sector}],staff:[staffExample]});
+operational('admin/roster','get','roster','listRoster','Consultar escala mensal','Exige roster.read. Um Admin de Setor só consulta os setores atribuídos.',
+  response('Turnos do mês.',list(ref('RosterShift')),[{...rosterShift,sector:'Setor Fictício',team:'Equipe Fictícia',shift:'Manhã',staff:[{id:staffId,name:staffExample.name}]}]),null,
+  {parameters:[{name:'month',in:'query',required:true,schema:{type:'string',pattern:'^20[0-9]{2}-(0[1-9]|1[0-2])$'},example:'2026-01'},sectorQuery]});
+operational('admin/roster/staff','post','roster','createRosterStaff','Cadastrar profissional no setor',
+  'Exige roster.write e acesso ao setor ativo. Nomes não são publicados em pesquisas ou indicadores.',
+  'RosterStaff',staffExample,{requestBody:body('RosterStaffInput',{sectorId:ids.sector,name:staffExample.name}),errors:{409:error('Nome já cadastrado no setor.')}});
+operational('admin/roster/shifts','put','roster','saveRosterShift','Salvar equipe e profissionais no turno',
+  'Exige roster.write. A escala é única por setor, data e turno. A equipe e os profissionais devem pertencer ao setor.',
+  'RosterShiftInput',{...rosterShift,staffIds:[staffId]},{requestBody:body('RosterShiftInput',{...rosterShift,staffIds:[staffId]})});
+operational('admin/dashboard/roster-teams','get','roster','getRosterIndicators','Consultar indicadores por equipe da escala',
+  'Exige dashboard.read. Usa setor, data de atendimento e turno. A média geral (0–10) exige pelo menos três pesquisas distintas. Retorna somente agregados por equipe.',
+  response('Indicadores.',list(ref('RosterIndicator')),[{id:teamId,label:'Equipe Fictícia',evaluations:3,averageOverall:'7.00'}]),null,
+  {parameters:[...periodQueries,sectorQuery]});
+operational('admin/ombudsman','get','ombudsman','listOmbudsmanCases','Listar manifestações',
+  'Exige ombudsman.manage. Inclui nota até 6, reclamação ou retorno solicitado. Os filtros usam a data da manifestação e os setores do atendimento.',
+  pageResponse('OmbudsmanItem',manifestation,'Página de manifestações sem dados de contato.'),null,
+  {parameters:[...periodQueries,...analysisPaging,sectorQuery,statusQuery(['open','in_progress','closed']),{name:'priority',in:'query',schema:{type:'string',enum:['normal','high']}}]});
+operational('admin/ombudsman/{id}','get','ombudsman','getOmbudsmanCase','Consultar manifestação e histórico',
+  'Exige ombudsman.manage. O contato fica em rota separada, sob demanda e auditado.',
+  'OmbudsmanDetail',{...manifestation,complaint:'A sinalização fictícia estava confusa.',history:[]},{parameters:[caseParam],errors:{404:missingCase}});
+operational('admin/ombudsman/{id}/actions','post','ombudsman','recordOmbudsmanAction','Registrar providência',
+  'Exige ombudsman.manage. Registra autor, situação e prioridade. Um caso com retorno pendente não pode ser encerrado.',
+  'OmbudsmanUpdated',{id:caseId,status:'in_progress',priority:'high'},{parameters:[caseParam],
+    requestBody:body('OmbudsmanAction',{status:'in_progress',priority:'high',note:'Sinalização encaminhada para revisão.'}),
+    errors:{404:missingCase,409:error('Transição não permitida ou retorno não encerrado.')}});
+operational('admin/users/accounts','post','users','createProfileAccount','Criar conta de colaborador',
+  'Exige users.manage. Somente Admin de Setor recebe setores atribuídos, e requer pelo menos um setor ativo.',
+  'ProfileRecord',scopedProfile,{requestBody:body('ProfileCreate',{role:'userSetor',sectorIds:[ids.sector],name:'Colaborador Fictício',...loginExample}),
+    errors:{409:error('E-mail já cadastrado.')}});
+operational('admin/users/{id}/access','get','users','getProfileAccess','Consultar perfil e setores',
+  'Exige users.manage. Retorna perfil e escopo, sem senha.', 'ProfileRecord',scopedProfile,{parameters:[profileParam],errors:{404:missingProfile}});
+operational('admin/users/{id}/access','put','users','updateProfileAccess','Atualizar perfil e setores',
+  'Exige users.manage. Revoga as sessões anteriores do usuário. Contas Super Admin existentes estão protegidas desta alteração.',
+  'ProfileRecord',scopedProfile,{parameters:[profileParam],requestBody:body('ProfileAccess',{role:'userSetor',sectorIds:[ids.sector]}),errors:{404:missingProfile}});
+operational('questions/services/{serviceId}/configuration','get','questions','getQuestionConfiguration','Consultar etapas e respostas que podem condicionar perguntas',
+  'Exige permissão de proposta, criação ou edição de perguntas. Um Admin de Setor só pode consultar seus serviços. A condição usa pergunta anterior ativa do mesmo serviço, geral ou da mesma etapa.',
+  'StageConfiguration',{stages:[{id:ids.stage,name:'Recepção'}],questions:[]},
+  {parameters:[idParameter('serviceId',ids.service,'UUID do serviço.') ]});
+
 export default {
   openapi: '3.0.3',
   info: {
     title: 'API Ouvidoria FHDOD',
-    version: '1.6.0',
+    version: '1.7.0',
     description: [
       'API de pesquisa de satisfação hospitalar. Use o Swagger aberto no servidor que pretende testar.',
       'Para testar no Swagger, use o login JSON em /api/v1/auth/login. O site usa as rotas /auth/web via proxy de mesma origem com cookie próprio. Em **Authorize**, cole somente o accessToken no esquema bearerAuth. A permissão dashboard.read é exigida no dashboard. O papel de setor do seed não recebe dashboard.read nem users.manage.',

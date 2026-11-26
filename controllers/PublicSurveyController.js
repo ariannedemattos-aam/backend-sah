@@ -5,6 +5,9 @@ import { env } from '../config/env.js';
 import { ok } from '../utils/response.js';
 import { AppError } from '../utils/errors.js';
 import { emitDashboardUpdate, emitNotificationUpdates } from '../services/SocketService.js';
+import { saveJourney, unchangedJourney } from '../services/AttendanceJourney.js';
+import { snapshotContext, updateVisibility } from '../services/QuestionJourney.js';
+import { enqueue } from './OmbudsmanController.js';
 import { notifyPermission } from '../services/Notifications.js';
 
 const id = z.string().uuid();
@@ -12,6 +15,7 @@ const attendanceInput = z.object({
   sectorId: id, serviceId: id, shiftId: id,
   attendanceDate: z.string().date().nullish(),
   attendanceKey: id.optional(),
+  stageIds: z.array(id).max(50).refine(ids => new Set(ids).size === ids.length, 'Etapas duplicadas.').optional(),
 });
 const paging = z.object({
   limit: z.coerce.number().int().min(1).max(30).default(20),
@@ -30,7 +34,6 @@ const returnInput = z.object({
   preferredChannel: z.string().trim().max(30).nullish(),
   message: z.string().trim().max(500).nullish(),
 });
-const lowScoreMax = 6;
 const completeInput = z.object({ overallRating: z.number().int().min(0).max(10) });
 
 async function ensure(req, conn = pool, lock = false) {
@@ -104,7 +107,7 @@ export async function survey(req, res) {
 }
 
 export async function addAttendance(req, res) {
-  const { sectorId, serviceId, shiftId, attendanceDate, attendanceKey } = attendanceInput.parse(req.body);
+  const { sectorId, serviceId, shiftId, attendanceDate, attendanceKey, stageIds } = attendanceInput.parse(req.body);
   const attendanceId = attendanceKey || crypto.randomUUID();
   await change(req, async (conn, survey) => {
     if (attendanceKey) {
@@ -114,7 +117,8 @@ export async function addAttendance(req, res) {
       );
       if (existing) {
         if (existing.survey_id === survey.id && existing.sector_id === sectorId && existing.service_id === serviceId
-            && existing.shift_id === shiftId && existing.attendance_date === (attendanceDate ?? null)) return;
+            && existing.shift_id === shiftId && existing.attendance_date === (attendanceDate ?? null)
+            && await unchangedJourney(conn, attendanceId, stageIds)) return;
         throw new AppError('Identificador de atendimento já utilizado.', 409);
       }
     }
@@ -127,6 +131,7 @@ export async function addAttendance(req, res) {
     if (!valid) throw new AppError('Informe setor, serviço e turno ativos e compatíveis.', 422);
     await conn.execute('INSERT INTO survey_attendances (id,survey_id,sector_id,service_id,shift_id,attendance_date) VALUES (?,?,?,?,?,?)',
       [attendanceId, survey.id, sectorId, serviceId, shiftId, attendanceDate ?? null]);
+    await saveJourney(conn, attendanceId, serviceId, stageIds);
   });
   ok(res, { id: attendanceId }, 'Atendimento adicionado.', 201);
 }
@@ -150,9 +155,12 @@ export async function start(req, res) {
         + 'SELECT UUID(), a.survey_id,a.id,q.id,qv.id,qv.prompt,q.type,0,qa.display_order '
         + 'FROM survey_attendances a JOIN question_assignments qa ON (qa.sector_id=a.sector_id OR qa.sector_id IS NULL) '
         + "AND (qa.service_id=a.service_id OR qa.service_id IS NULL) AND qa.is_active=1 JOIN questions q ON q.id=qa.question_id AND q.status='active' "
-        + 'JOIN question_versions qv ON qv.question_id=q.id AND qv.version=q.current_version WHERE a.survey_id=?',
+        + 'JOIN question_versions qv ON qv.question_id=q.id AND qv.version=q.current_version '
+        + 'LEFT JOIN attendance_journeys j ON j.attendance_id=a.id LEFT JOIN attendance_journey_stages js ON js.attendance_id=a.id AND js.stage_id=q.stage_id '
+        + 'WHERE a.survey_id=? AND (j.attendance_id IS NULL OR q.stage_id IS NULL OR js.stage_id IS NOT NULL)',
       [survey.id],
     );
+    await snapshotContext(conn, survey.id);
     await conn.execute("UPDATE surveys SET status='in_progress',started_at=UTC_TIMESTAMP() WHERE id=?", [survey.id]);
   });
   ok(res, null, 'Pesquisa iniciada.');
@@ -162,10 +170,11 @@ export async function questions(req, res) {
   await ensure(req);
   const { limit, offset } = paging.parse(req.query);
   const [data] = await pool.execute(
-    "SELECT sq.id,sq.attendance_id attendanceId,sq.prompt_snapshot text,sq.type_snapshot type,0 required,sq.display_order displayOrder,st.name stage,"
+    "SELECT sq.id,sq.attendance_id attendanceId,sq.prompt_snapshot text,sq.type_snapshot type,0 required,sq.display_order displayOrder,IF(c.question_id IS NULL,st.name,c.stage_name) stage,"
       + "(SELECT JSON_ARRAYAGG(JSON_OBJECT('value',qo.value,'label',qo.label,'order',qo.display_order)) FROM question_options qo WHERE qo.question_version_id=sq.question_version_id) options "
       + 'FROM survey_questions sq LEFT JOIN questions q ON q.id=sq.question_id LEFT JOIN stages st ON st.id=q.stage_id '
-      + 'WHERE sq.survey_id=? ORDER BY sq.display_order,sq.id LIMIT ? OFFSET ?',
+      + 'LEFT JOIN survey_question_context c ON c.question_id=sq.id '
+      + 'WHERE sq.survey_id=? AND COALESCE(c.visible,1)=1 ORDER BY sq.display_order,sq.id LIMIT ? OFFSET ?',
     [req.params.id, limit, offset],
   );
   ok(res, data.map(({ options, ...question }) => ({
@@ -178,7 +187,8 @@ export async function nextQuestion(req, res) {
   await ensure(req);
   const [[data]] = await pool.execute(
     'SELECT sq.id,sq.attendance_id,sq.prompt_snapshot,sq.type_snapshot,0 AS required_snapshot,sq.display_order FROM survey_questions sq '
-      + 'LEFT JOIN answers a ON a.survey_question_id=sq.id WHERE sq.survey_id=? AND a.id IS NULL ORDER BY sq.display_order,sq.id LIMIT 1',
+      + 'LEFT JOIN survey_question_context c ON c.question_id=sq.id '
+      + 'LEFT JOIN answers a ON a.survey_question_id=sq.id WHERE sq.survey_id=? AND a.id IS NULL AND COALESCE(c.visible,1)=1 ORDER BY sq.display_order,sq.id LIMIT 1',
     [req.params.id],
   );
   ok(res, data ?? null);
@@ -205,13 +215,15 @@ export async function answer(req, res) {
   const input = answerInput.parse(req.body);
   await change(req, async (conn, survey) => {
     requireStatus(survey, 'in_progress');
-    const [[question]] = await conn.execute('SELECT id,type_snapshot,question_version_id FROM survey_questions WHERE id=? AND survey_id=?',
+    const [[question]] = await conn.execute('SELECT q.id,q.type_snapshot,q.question_version_id,COALESCE(c.visible,1) visible FROM survey_questions q '
+      + 'LEFT JOIN survey_question_context c ON c.question_id=q.id WHERE q.id=? AND q.survey_id=?',
       [req.params.surveyQuestionId, survey.id]);
-    if (!question) throw new AppError('Pergunta não encontrada.', 404);
+    if (!question || !question.visible) throw new AppError('Pergunta não encontrada nesta etapa.', 404);
     const [value, textValue] = await normalizeAnswer(conn, question, input);
     await conn.execute('INSERT INTO answers (id,survey_question_id,rating_value,text_value) VALUES (UUID(),?,?,?) '
       + 'ON DUPLICATE KEY UPDATE rating_value=VALUES(rating_value),text_value=VALUES(text_value),updated_at=UTC_TIMESTAMP()',
     [question.id, value, textValue]);
+    await updateVisibility(conn, survey.id);
   });
   ok(res, null, 'Resposta salva.');
 }
@@ -244,18 +256,18 @@ export async function complete(req, res) {
     requireStatus(survey, 'in_progress');
     const { overallRating } = completeInput.parse(req.body);
     await conn.execute("UPDATE surveys SET status='completed',completed_at=UTC_TIMESTAMP(),overall_rating=? WHERE id=?", [overallRating, survey.id]);
-    const [[request]] = await conn.execute('SELECT 1 AS present FROM return_requests WHERE survey_id=?', [survey.id]);
-    const recipients = request ? await notifyPermission(conn, ['return_requests.manage'], {
+    const flags = await enqueue(conn, survey.id, overallRating);
+    const recipients = flags?.hasReturn ? await notifyPermission(conn, ['return_requests.manage'], {
       type: 'return.created', title: 'Nova solicitação de retorno',
       message: 'Uma pesquisa concluída inclui pedido de retorno.', href: '/admin/retornos',
-    }, { surveyId: survey.id }) : [];
-    if (overallRating <= lowScoreMax) {
-      const lowScoreRecipients = await notifyPermission(conn, ['surveys.read'], {
-        type: 'survey.low_score', title: 'Avaliação geral baixa',
+    }, { surveyId: survey.id, roles: ['userAdmin','ouvidoria'] }) : [];
+    if (flags) {
+      const operators = await notifyPermission(conn, ['ombudsman.manage'], {
+        type: 'ombudsman.created', title: 'Nova manifestação',
         message: 'Uma pesquisa concluída requer triagem da Ouvidoria.',
-        href: '/admin/avaliacoes?overallMax=' + lowScoreMax,
-      }, { surveyId: survey.id, role: 'userAdmin' });
-      recipients.push(...lowScoreRecipients);
+        href: '/admin/ouvidoria',
+      }, { surveyId: survey.id, roles: ['userAdmin','ouvidoria'] });
+      recipients.push(...operators);
     }
     return { changed: true, recipients: [...new Set(recipients)] };
   });

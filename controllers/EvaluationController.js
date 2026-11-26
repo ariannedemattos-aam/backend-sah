@@ -87,7 +87,7 @@ export async function detail(req, res) {
       [id, ...attendance.params],
     );
     const [rows] = await conn.execute(
-      cte + " SELECT q.id,q.prompt_snapshot prompt,q.type_snapshot type,x.rating_value rating,st.name stage,sv.name service,"
+      cte + " SELECT q.id,q.prompt_snapshot prompt,q.type_snapshot type,x.rating_value rating,IF(qc.question_id IS NULL,st.name,qc.stage_name) stage,sv.name service,"
         + " CASE WHEN q.type_snapshot IN ('single_choice','multiple_choice') THEN x.text_value END choice,"
         + " CASE WHEN q.type_snapshot='text' AND x.text_value IS NOT NULL THEN 1 ELSE 0 END hasText,"
         + " (SELECT JSON_ARRAYAGG(JSON_OBJECT('value',o.value,'label',o.label)) FROM question_options o WHERE o.question_version_id=q.question_version_id) AS choices"
@@ -139,6 +139,7 @@ function requestConditions(req, filters) {
     params.push(req.user.sub);
   }
   periodConditions(filters, 'r.created_at', conditions, params);
+  if (filters.requestId) { conditions.push('r.id=?'); params.push(filters.requestId); }
   if (filters.status) { conditions.push('r.status=?'); params.push(filters.status); }
   return { conditions, params };
 }

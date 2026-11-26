@@ -1,11 +1,13 @@
 import { Router } from 'express';
+import * as roster from '../controllers/RosterController.js';
+import * as ombudsman from '../controllers/OmbudsmanController.js';
+import * as accounts from '../controllers/UserAccessController.js';
 import * as admin from '../controllers/AdminController.js';
 import * as evaluation from '../controllers/EvaluationController.js';
 import { exportReport } from '../controllers/ReportController.js';
 import * as invitation from '../controllers/InvitationController.js';
 import { authenticate, requirePermission } from '../middlewares/authMiddleware.js';
 import { asyncRoute } from '../utils/asyncRoute.js';
-import { isSector } from '../services/EvaluationData.js';
 
 const router = Router();
 router.use(authenticate);
@@ -15,10 +17,21 @@ const surveys = requirePermission('surveys.read');
 const returns = requirePermission('return_requests.manage');
 const reports = requirePermission('reports.export');
 const invitations = requirePermission('invitations.manage');
-const feedbackAccess = (req, res, next) => isSector(req.user) ? next() : surveys(req, res, next);
-const analysisAccess = (req, res, next) => isSector(req.user)
-  ? next() : requirePermission('surveys.read', 'reports.export')(req, res, next);
+const feedbackAccess = requirePermission('feedback.read');
+const analysisAccess = requirePermission('surveys.read', 'reports.export', 'feedback.read');
 const noStore = (_req, res, next) => { res.set('Cache-Control', 'private, no-store'); next(); };
+
+router.get('/roster/options', requirePermission('roster.read'), asyncRoute(roster.options));
+router.get('/roster', requirePermission('roster.read'), asyncRoute(roster.list));
+router.post('/roster/staff', requirePermission('roster.write'), asyncRoute(roster.createStaff));
+router.put('/roster/shifts', requirePermission('roster.write'), asyncRoute(roster.saveShift));
+router.get('/dashboard/roster-teams', dashboard, asyncRoute(roster.teamIndicators));
+router.get('/ombudsman', requirePermission('ombudsman.manage'), asyncRoute(ombudsman.list));
+router.get('/ombudsman/:id', requirePermission('ombudsman.manage'), asyncRoute(ombudsman.detail));
+router.post('/ombudsman/:id/actions', requirePermission('ombudsman.manage'), asyncRoute(ombudsman.addAction));
+router.post('/users/accounts', manage, asyncRoute(accounts.create));
+router.get('/users/:id/access', manage, asyncRoute(accounts.get));
+router.put('/users/:id/access', manage, asyncRoute(accounts.update));
 
 router.get('/analysis/options', analysisAccess, asyncRoute(evaluation.options));
 router.get('/evaluations', surveys, noStore, asyncRoute(evaluation.list));

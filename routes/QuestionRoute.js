@@ -7,6 +7,7 @@ const router = Router();
 router.use(authenticate);
 router.get('/', requirePermission('questions.read'), asyncRoute(questions.list));
 router.get('/services', requirePermission('questions.propose', 'questions.create'), asyncRoute(questions.catalog));
+router.get('/services/:serviceId/configuration', requirePermission('questions.propose', 'questions.create', 'questions.update'), asyncRoute(questions.configuration));
 router.post('/', requirePermission('questions.propose', 'questions.create'), asyncRoute(questions.propose));
 router.get('/:id', requirePermission('questions.read'), asyncRoute(questions.get));
 router.put('/:id', requirePermission('questions.update', 'questions.propose'), asyncRoute(questions.update));
