@@ -66,12 +66,20 @@ export async function sectors(_req, res) {
 }
 
 export async function services(req, res) {
-  const [data] = await pool.execute('SELECT id,name,slug,description FROM services WHERE sector_id=? AND is_active=1 ORDER BY name', [req.params.id]);
+  const [data] = await pool.execute(
+    'SELECT v.id,v.name,v.slug,v.description FROM services v JOIN sectors s ON s.id=v.sector_id WHERE s.id=? AND s.is_active=1 AND v.is_active=1 ORDER BY v.name',
+    [req.params.id],
+  );
   ok(res, data);
 }
 
 export async function stages(req, res) {
-  const [data] = await pool.execute('SELECT st.id,st.name,ss.display_order,ss.is_required,ss.team_id FROM service_stages ss JOIN stages st ON st.id=ss.stage_id WHERE ss.service_id=? AND ss.is_active=1 ORDER BY ss.display_order', [req.params.id]);
+  const [data] = await pool.execute(
+    'SELECT st.id,st.name,ss.display_order,ss.is_required,ss.team_id FROM service_stages ss JOIN stages st ON st.id=ss.stage_id '
+      + 'JOIN services v ON v.id=ss.service_id JOIN sectors s ON s.id=v.sector_id '
+      + 'WHERE v.id=? AND ss.is_active=1 AND st.is_active=1 AND v.is_active=1 AND s.is_active=1 ORDER BY ss.display_order',
+    [req.params.id],
+  );
   ok(res, data);
 }
 
@@ -99,7 +107,7 @@ export async function addAttendance(req, res) {
     requireStatus(survey, 'draft');
     const [[valid]] = await conn.execute(
       'SELECT v.id FROM services v JOIN sectors s ON s.id=v.sector_id JOIN shifts sh ON sh.id=? '
-        + 'WHERE v.id=? AND s.id=? AND s.is_active=1 AND v.is_active=1 AND sh.is_active=1',
+        + 'WHERE v.id=? AND s.id=? AND s.is_active=1 AND v.is_active=1 AND sh.is_active=1 FOR SHARE',
       [shiftId, serviceId, sectorId],
     );
     if (!valid) throw new AppError('Informe setor, serviço e turno ativos e compatíveis.', 422);

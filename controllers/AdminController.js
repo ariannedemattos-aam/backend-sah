@@ -3,6 +3,7 @@ import { z } from 'zod';
 import pool from '../config/database.js';
 import { ok, paginated } from '../utils/response.js';
 import { AppError } from '../utils/errors.js';
+import { withTransaction } from '../utils/withTransaction.js';
 
 const resourceColumns = {
   sectors: 'id,name,slug,description,is_active,created_at,updated_at',
@@ -14,17 +15,20 @@ const resourceColumns = {
   roles: 'id,name,created_at',
   permissions: 'id,name,description,created_at',
 };
-const catalogFields = {
+export const catalogFields = {
   sectors: ['slug'], services: ['slug', 'sector_id'], stages: [],
   teams: ['sector_id', 'service_id'], shifts: ['display_order'],
 };
 const pagination = z.object({
   page: z.coerce.number().int().min(1).max(1000000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
+  search: z.string().trim().max(120).default(''),
+  status: z.enum(['active', 'inactive']).optional(),
 });
 const common = z.object({ name: z.string().trim().min(1).max(120), description: z.string().trim().max(2000).nullish() });
 const slug = z.string().trim().min(1).max(140).nullish();
 const idField = z.string().uuid().nullish();
+const statusInput = z.object({ active: z.boolean() });
 const catalog = {
   sectors: common.extend({ slug }),
   services: common.extend({ slug, sector_id: idField }),
@@ -34,35 +38,112 @@ const catalog = {
 };
 
 export async function list(req, res, resource) {
-  const { page, limit } = pagination.parse(req.query);
+  const { page, limit, search, status } = pagination.parse(req.query);
   const offset = (page - 1) * limit;
+  const clauses = [], values = [];
+  if (search) {
+    clauses.push('LOCATE(?, name)>0');
+    values.push(search);
+  }
+  if (status) {
+    if (!Object.hasOwn(catalog, resource) && resource !== 'users') {
+      throw new AppError('Este catálogo não possui status.', 422);
+    }
+    clauses.push('is_active=?');
+    values.push(Number(status === 'active'));
+  }
+  const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : '';
   const [[[count]], [data]] = await Promise.all([
-    pool.execute('SELECT COUNT(*) total FROM ' + resource),
-    pool.execute('SELECT ' + resourceColumns[resource] + ' FROM ' + resource + ' ORDER BY id LIMIT ? OFFSET ?', [limit, offset]),
+    pool.execute('SELECT COUNT(*) total FROM ' + resource + where, values),
+    pool.execute('SELECT ' + resourceColumns[resource] + ' FROM ' + resource + where + ' ORDER BY name,id LIMIT ? OFFSET ?', [...values, limit, offset]),
   ]);
   paginated(res, data, { page, limit, total: count.total, totalPages: Math.ceil(count.total / limit) });
+}
+
+async function requireCatalogEntry(connection, resource, id, lock = false) {
+  const [[entry]] = await connection.execute(
+    'SELECT ' + resourceColumns[resource] + ' FROM ' + resource + ' WHERE id=?' + (lock ? ' FOR UPDATE' : ''),
+    [id],
+  );
+  if (!entry) throw new AppError('Registro não encontrado.', 404);
+  return entry;
+}
+
+async function validateLinks(connection, resource, entry, previous) {
+  if (resource === 'teams' && entry.service_id && entry.sector_id) {
+    const [[service]] = await connection.execute('SELECT sector_id FROM services WHERE id=? FOR UPDATE', [entry.service_id]);
+    if (service?.sector_id !== entry.sector_id) throw new AppError('O serviço deve pertencer ao setor informado.', 422);
+  }
+  if (resource === 'services' && previous && previous.sector_id !== (entry.sector_id ?? null)) {
+    const [[dependencies]] = await connection.execute(
+      'SELECT EXISTS(SELECT 1 FROM survey_attendances WHERE service_id=?) AS attendance, '
+        + 'EXISTS(SELECT 1 FROM question_assignments WHERE service_id=?) AS question, '
+        + 'EXISTS(SELECT 1 FROM teams WHERE service_id=?) AS team',
+      [previous.id, previous.id, previous.id],
+    );
+    if (dependencies.attendance || dependencies.question || dependencies.team) {
+      throw new AppError('O setor de um serviço vinculado a atendimentos, perguntas ou equipes não pode ser alterado.', 409);
+    }
+  }
+}
+
+function catalogError(error) {
+  if (error.code === 'ER_DUP_ENTRY') return new AppError('Já existe um registro com esse identificador de catálogo.', 409);
+  if (error.code === 'ER_NO_REFERENCED_ROW_2') return new AppError('Setor ou serviço informado não encontrado.', 422);
+  return error;
 }
 
 export async function create(req, res, resource) {
   if (!Object.hasOwn(catalog, resource)) throw new AppError('Recurso não disponível para criação genérica.', 400);
   const entry = catalog[resource].parse(req.body);
   const id = randomUUID();
-  if (resource === 'teams' && entry.service_id && entry.sector_id) {
-    const [[service]] = await pool.execute('SELECT sector_id FROM services WHERE id=?', [entry.service_id]);
-    if (service?.sector_id !== entry.sector_id) throw new AppError('O serviço deve pertencer ao setor informado.', 422);
-  }
   const fields = ['id', 'name', 'description', ...catalogFields[resource]];
   try {
-    await pool.execute(
-      'INSERT INTO ' + resource + ' (' + fields.join(',') + ') VALUES (' + fields.map(() => '?').join(',') + ')',
-      [id, ...fields.slice(1).map(field => entry[field] ?? null)],
-    );
+    await withTransaction(async connection => {
+      await validateLinks(connection, resource, entry);
+      await connection.execute(
+        'INSERT INTO ' + resource + ' (' + fields.join(',') + ') VALUES (' + fields.map(() => '?').join(',') + ')',
+        [id, ...fields.slice(1).map(field => entry[field] ?? null)],
+      );
+    });
   } catch (error) {
-    if (error.code === 'ER_DUP_ENTRY') throw new AppError('Já existe um registro com esse identificador de catálogo.', 409);
-    if (error.code === 'ER_NO_REFERENCED_ROW_2') throw new AppError('Setor ou serviço informado não encontrado.', 422);
-    throw error;
+    throw catalogError(error);
   }
   ok(res, { id }, 'Registro criado.', 201);
+}
+
+export async function get(req, res, resource) {
+  const id = z.string().uuid().parse(req.params.id);
+  ok(res, await requireCatalogEntry(pool, resource, id));
+}
+
+export async function update(req, res, resource) {
+  const id = z.string().uuid().parse(req.params.id);
+  const entry = catalog[resource].parse(req.body);
+  const fields = ['name', 'description', ...catalogFields[resource]];
+  try {
+    await withTransaction(async connection => {
+      const previous = await requireCatalogEntry(connection, resource, id, true);
+      await validateLinks(connection, resource, entry, previous);
+      await connection.execute(
+        'UPDATE ' + resource + ' SET ' + fields.map(field => field + '=?').join(',') + ' WHERE id=?',
+        [...fields.map(field => entry[field] ?? null), id],
+      );
+    });
+  } catch (error) {
+    throw catalogError(error);
+  }
+  ok(res, { id }, 'Registro atualizado.');
+}
+
+export async function setStatus(req, res, resource) {
+  const id = z.string().uuid().parse(req.params.id);
+  const { active } = statusInput.parse(req.body);
+  await withTransaction(async connection => {
+    await requireCatalogEntry(connection, resource, id, true);
+    await connection.execute('UPDATE ' + resource + ' SET is_active=? WHERE id=?', [Number(active), id]);
+  });
+  ok(res, { id, active }, active ? 'Registro reativado.' : 'Registro arquivado.');
 }
 
 export async function overview(_req, res) {

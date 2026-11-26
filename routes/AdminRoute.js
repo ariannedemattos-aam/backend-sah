@@ -16,4 +16,10 @@ for (const resource of ['sectors', 'services', 'stages', 'teams', 'shifts', 'use
   router.get('/' + resource, manage, asyncRoute((req, res) => admin.list(req, res, resource)));
   router.post('/' + resource, manage, asyncRoute((req, res) => admin.create(req, res, resource)));
 }
+for (const resource of Object.keys(admin.catalogFields)) {
+  const path = '/' + resource + '/:id';
+  router.get(path, manage, asyncRoute((req, res) => admin.get(req, res, resource)));
+  router.put(path, manage, asyncRoute((req, res) => admin.update(req, res, resource)));
+  router.patch(path + '/status', manage, asyncRoute((req, res) => admin.setStatus(req, res, resource)));
+}
 export default router;

@@ -84,6 +84,8 @@ export const schemas = {
   }, ['surveys', 'answers', 'averageRating', 'positiveAnswers', 'ratedAnswers']),
   Dimension: object({ label: string, responses: count, averageRating: average }, ['label', 'responses', 'averageRating']),
   Pagination: object({ page: count, limit: count, total: count, totalPages: count }, ['page', 'limit', 'total', 'totalPages']),
+  StatusInput: object({ active: { type: 'boolean' } }, ['active']),
+  CatalogStatus: object({ id: uuid, active: { type: 'boolean' } }, ['id', 'active']),
   InputSector: object({ ...catalogInput, slug: catalogSlug }, ['name']),
   InputService: object({ ...catalogInput, slug: catalogSlug, sector_id: nullable(uuid) }, ['name']),
   InputStage: object(catalogInput, ['name']),
@@ -100,20 +102,27 @@ export const schemas = {
   AdminUser: object({ ...catalogBase, role_id: uuid, email, is_active: flag, updated_at: nullable(timestamp) }),
   AdminRole: object(catalogBase),
   AdminPermission: object({ ...catalogBase, description: nullable(string) }),
-  QuestionInput: object({
+  QuestionContent: object({
     prompt: { ...string, minLength: 10, maxLength: 500 },
     type: questionType,
-    serviceId: uuid,
     required: { type: 'boolean', default: false },
     options: { type: 'array', items: { ...string, minLength: 1, maxLength: 100 }, minItems: 2, maxItems: 10, uniqueItems: true },
-  }, ['prompt', 'type', 'serviceId']),
+  }, ['prompt', 'type']),
+  QuestionInput: { allOf: [ref('QuestionContent'), object({ serviceId: uuid }, ['serviceId'])] },
+  QuestionEdit: {
+    allOf: [ref('QuestionContent'), object({
+      version: { type: 'integer', minimum: 1 }, changeReason: { ...string, minLength: 3, maxLength: 500 },
+    }, ['version', 'changeReason'])],
+  },
   QuestionService: object({ ...named, sectorName: string }, ['id', 'name', 'sectorName']),
   QuestionState: object({ id: uuid, status: { type: 'string', enum: ['pending', 'approved', 'active', 'inactive', 'rejected'] } }, ['id', 'status']),
+  QuestionVersion: { allOf: [ref('QuestionState'), object({ version: { type: 'integer', minimum: 1 } }, ['version'])] },
   QuestionEntry: {
-    allOf: [ref('QuestionState'), object({
-      prompt: string, type: questionType, required: nullable(flag), createdAt: timestamp, services: nullable(string),
-    }, ['prompt', 'type', 'required', 'createdAt', 'services'])],
+    allOf: [ref('QuestionVersion'), object({
+      prompt: string, type: questionType, required: nullable(flag), createdAt: timestamp, services: nullable(string), canEdit: { type: 'boolean' },
+    }, ['prompt', 'type', 'required', 'createdAt', 'services', 'canEdit'])],
   },
+  QuestionDetail: { allOf: [ref('QuestionEntry'), object({ options: list(string) }, ['options'])] },
   QuestionReview: object({ justification: { ...string, minLength: 3, maxLength: 500 } }, ['justification']),
   TvOverview: object({ responses: count, averageRating: average }, ['responses', 'averageRating']),
   TvSector: {

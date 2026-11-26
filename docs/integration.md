@@ -3,7 +3,7 @@
 - Swagger da demonstração no Render: [API FHDOD](https://fhdod-ouvidoria-demo.onrender.com/api-docs/) e [OpenAPI em JSON](https://fhdod-ouvidoria-demo.onrender.com/api-docs.json).
 - Ambiente local: inicie o back-end com `npm start` e abra [Swagger local](http://localhost:3000/api-docs/). Se a porta for diferente, abra o Swagger nessa porta e selecione **Servidor que hospeda este Swagger**.
 - Use o Swagger do próprio ambiente para executar chamadas no mesmo domínio. A API publicada permite o CORS do front-end da demonstração. Os arquivos do Swagger são servidos quando `SWAGGER_ENABLED` está habilitado.
-- O inventário cobre 49 operações de negócio e saúde. Os arquivos e ativos do Swagger, o preflight automático CORS e o transporte Socket.IO são infraestrutura.
+- O inventário cobre 67 operações de negócio e saúde. Os arquivos e ativos do Swagger, o preflight automático CORS e o transporte Socket.IO são infraestrutura.
 
 ## Testes no Swagger
 
@@ -34,7 +34,8 @@ Os caminhos abaixo são relativos a `/api/v1`. O OpenAPI cobre as chamadas utili
 | Pesquisa | `POST /public/surveys`, `POST /public/surveys/{id}/attendances`, `POST /public/surveys/{id}/start` |
 | Questionário e envio | `GET /public/surveys/{id}/questions`, `PUT /public/surveys/{id}/answers/{surveyQuestionId}`, `PUT /public/surveys/{id}/feedback`, `PUT /public/surveys/{id}/return-request`, `POST /public/surveys/{id}/complete` |
 | Dashboard | `GET /admin/dashboard/overview` e os cinco GETs de dimensão em `/admin/dashboard/` |
-| Propostas e revisão | `GET /questions`, `GET /questions/services`, `POST /questions`, `POST /questions/{id}/approve`, `POST /questions/{id}/reject` |
+| Cadastros | Listagens das oito coleções em `/admin`; criação, edição e alteração de status para setores, serviços, etapas, equipes e turnos |
+| Propostas e revisão | `GET /questions`, `GET /questions/services`, `POST /questions`, `GET /questions/{id}`, `PUT /questions/{id}`, `PATCH /questions/{id}/status`, `POST /questions/{id}/approve`, `POST /questions/{id}/reject` |
 | Painel público | `GET /tvwall/overview`, `GET /tvwall/sectors` |
 
 ## Eventos Socket.IO
@@ -53,8 +54,9 @@ Os caminhos abaixo são relativos a `/api/v1`. O OpenAPI cobre as chamadas utili
 
 ## Regras e funcionalidades pendentes
 
-- A administração lista oito catálogos com paginação. As cinco criações de catálogo devolvem o UUID real. A criação genérica de usuários, papéis e permissões fica bloqueada.
-- Perguntas de setor são limitadas aos serviços dos setores atribuídos. Aprovação e rejeição exigem permissões distintas e gravam a justificativa. A aprovação ativa a pergunta para novas pesquisas, preservando as perguntas já geradas.
+- A administração lista oito catálogos com busca por nome e paginação. Usuários, papéis e permissões ficam disponíveis para consulta. Os cinco catálogos editáveis devolvem o UUID real e aceitam arquivamento e reativação. O status inativo preserva os vínculos do histórico. O setor de um serviço vinculado a atendimentos, equipes ou perguntas não pode ser trocado.
+- Perguntas de setor são limitadas aos serviços dos setores atribuídos. O setor edita suas próprias propostas pendentes ou rejeitadas. A edição de uma rejeitada a devolve à revisão. A administração pode editar uma pergunta ativa e publicar sua nova versão. A versão anterior continua nos questionários iniciados. Para recuperar uma pergunta arquivada, reabra a revisão e aprove novamente.
+- Aprovação e rejeição exigem permissões distintas e gravam a justificativa. Somente perguntas ativas entram em novos questionários, conforme os serviços e setores associados.
 - Perguntas aceitam nota de 1 a 5, texto livre ou valores das opções cadastradas. Múltipla escolha usa `optionValues`. Após conclusão, as edições ficam bloqueadas e a conclusão é idempotente.
 - O resumo do dashboard é global e usa notas individuais de 1 a 5. A nota geral de encerramento usa outra escala. O painel público usa somente pesquisas concluídas e aplica o mínimo de respostas configurado.
 - Exportações, convites, envio de notificações e telas administrativas de avaliações, feedback e retornos seguem sem integração. O registro público de pedidos de retorno funciona via API. O front-end não usa `POST /auth/refresh`; o logout revoga o refresh token e o JWT de acesso vence no prazo original.

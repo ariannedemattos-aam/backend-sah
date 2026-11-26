@@ -68,6 +68,14 @@ const integerQuery = (name, value, description, minimum, maximum) => ({
   name, in: 'query', description, schema: { type: 'integer', minimum, default: value, ...(maximum && { maximum }) },
   example: value,
 });
+const searchQuery = { name: 'search', in: 'query', description: 'Busca por trecho do nome ou do enunciado.', schema: { type: 'string', maxLength: 120 }, example: 'Fictício' };
+const statusQuery = (values) => ({ name: 'status', in: 'query', description: 'Filtra pelo status.', schema: { type: 'string', enum: values } });
+const pageResponse = (entity, example, description) => ({
+  description,
+  content: media(object({
+    success: { type: 'boolean', enum: [true] }, data: list(ref(entity)), pagination: ref('Pagination'),
+  }, ['success', 'data', 'pagination']), { success: true, data: [example], pagination: { page: 1, limit: 20, total: 1, totalPages: 1 } }),
+});
 const surveyId = idParameter('id', ids.survey, 'ID da pesquisa retornado na criação.');
 const paths = {};
 
@@ -274,14 +282,14 @@ for (const [key, { label, name, entity, fields }] of Object.entries(resources)) 
   add(path, 'get', group, 'Listar ' + label + ' na administração',
     'Exige JWT Bearer com users.manage. A listagem é paginada. A listagem de usuários retorna exclusivamente dados de cadastro e papel.',
     {
-      200: { description: 'Página do catálogo.', content: media(object({
-        success: { type: 'boolean', enum: [true] }, data: list(ref('Admin' + entity)), pagination: ref('Pagination'),
-      }, ['success', 'data', 'pagination']), { success: true, data: [example], pagination: { page: 1, limit: 20, total: 1, totalPages: 1 } }) },
+      200: pageResponse('Admin' + entity, example, 'Página do catálogo.'),
       401: missingJwt, 403: forbidden, 422: invalidData, 500: failure,
     },
     { operationId: 'listAdmin_' + key, security: bearer, parameters: [
       integerQuery('page', 1, 'Número da página.', 1, 1000000),
       integerQuery('limit', 20, 'Registros por página.', 1, 100),
+      searchQuery,
+      ...(name || key === 'users' ? [statusQuery(['active', 'inactive'])] : []),
     ] });
   const postResponses = name
     ? {
@@ -298,14 +306,38 @@ for (const [key, { label, name, entity, fields }] of Object.entries(resources)) 
       operationId: 'createAdmin_' + key, security: bearer,
       ...(name && { requestBody: body('Input' + entity, { name, description: 'Registro de demonstração.', ...fields }) }),
     });
+  if (!name) continue;
+  const recordPath = path + '/{id}';
+  const parameters = [idParameter('id', example.id, 'UUID retornado na criação ou na listagem.')];
+  const missingRecord = error('Registro inexistente.', 'Registro não encontrado.');
+  const commonErrors = { 401: missingJwt, 403: forbidden, 404: missingRecord, 422: invalidData, 500: failure };
+  add(recordPath, 'get', group, 'Consultar registro de ' + label,
+    'Exige users.manage. Retorna o registro, inclusive se arquivado.',
+    { 200: response('Registro encontrado.', ref('Admin' + entity), example), ...commonErrors },
+    { operationId: 'getAdmin_' + key, security: bearer, parameters });
+  add(recordPath, 'put', group, 'Editar registro de ' + label,
+    'Exige users.manage. Substitui os campos editáveis e mantém o UUID e o status. O setor de um serviço com dependências não pode ser alterado.',
+    { 200: response('Registro atualizado.', ref('Id'), { id: example.id }, 'Registro atualizado.'),
+      409: error('Identificador em uso ou alteração de vínculo vedada.', 'Já existe um registro com esse identificador de catálogo.'), ...commonErrors },
+    { operationId: 'updateAdmin_' + key, security: bearer, parameters,
+      requestBody: body('Input' + entity, { name: name + ' atualizado', description: 'Alteração fictícia.', ...fields }) });
+  add(recordPath + '/status', 'patch', group, 'Arquivar ou reativar registro de ' + label,
+    'Exige users.manage. A operação é idempotente e preserva referências e histórico. Arquivar um setor também retira seus serviços das novas seleções públicas enquanto o setor estiver inativo.',
+    { 200: response('Status salvo.', ref('CatalogStatus'), { id: example.id, active: false }, 'Registro arquivado.'), ...commonErrors },
+    { operationId: 'setAdminStatus_' + key, security: bearer, parameters, requestBody: body('StatusInput', { active: false }) });
 }
 
 const questionStamp = { id: ids.question, status: 'pending' };
+const questionEntry = { ...questionStamp, version: 1, canEdit: true, type: 'rating', required: 0, createdAt: '2026-01-15T13:00:00.000Z', services: 'Atendimento de Urgência', prompt: question.text };
+const questionMissing = error('Pergunta inexistente ou fora do escopo do usuário.', 'Pergunta não encontrada.');
+const questionParameters = [idParameter('id', ids.question, 'UUID da pergunta.')];
 add('/api/v1/questions', 'get', 'questions', 'Listar propostas e perguntas cadastradas',
-  'Exige questions.read. A administração vê até 100 registros. Colaboradores de setor veem somente as próprias propostas.',
-  { 200: response('Perguntas cadastradas.', list(ref('QuestionEntry')), [{ ...questionStamp, type: 'rating', required: 0, createdAt: '2026-01-15T13:00:00.000Z', services: 'Atendimento de Urgência', prompt: question.text }]),
-    401: missingJwt, 403: forbidden, 500: failure },
-  { operationId: 'listQuestions', security: bearer });
+  'Exige questions.read. Retorna perguntas paginadas, com filtro por status ou enunciado. Colaboradores de setor veem somente as próprias propostas.',
+  { 200: pageResponse('QuestionEntry', questionEntry, 'Página de perguntas.'), 401: missingJwt, 403: forbidden, 422: invalidData, 500: failure },
+  { operationId: 'listQuestions', security: bearer, parameters: [
+    integerQuery('page', 1, 'Número da página.', 1, 1000000), integerQuery('limit', 100, 'Perguntas por página.', 1, 100),
+    searchQuery, statusQuery(['pending', 'approved', 'active', 'inactive', 'rejected']),
+  ] });
 
 add('/api/v1/questions/services', 'get', 'questions', 'Listar serviços disponíveis para propostas',
   'Exige questions.propose ou questions.create. Colaboradores de setor veem apenas serviços ativos dos setores atribuídos.',
@@ -321,6 +353,28 @@ add('/api/v1/questions', 'post', 'questions', 'Enviar pergunta para aprovação'
     prompt: 'Como você avalia a orientação recebida para o exame?', type: 'single_choice', serviceId: ids.service, required: false,
     options: ['Clara', 'Poderia melhorar'],
   }) });
+
+add('/api/v1/questions/{id}', 'get', 'questions', 'Consultar a versão atual de uma pergunta',
+  'Exige questions.read. Administradores podem abrir todas as perguntas. Colaboradores de setor consultam somente as próprias propostas. Retorna opções e número da versão.',
+  { 200: response('Pergunta encontrada.', ref('QuestionDetail'), { ...questionEntry, options: ['Muito insatisfeito', 'Insatisfeito', 'Neutro', 'Satisfeito', 'Muito satisfeito'] }),
+    401: missingJwt, 403: forbidden, 404: questionMissing, 422: invalidData, 500: failure },
+  { operationId: 'getQuestion', security: bearer, parameters: questionParameters });
+
+add('/api/v1/questions/{id}', 'put', 'questions', 'Salvar nova versão de uma pergunta',
+  'Exige questions.update ou questions.propose. O setor só pode editar propostas próprias pendentes ou rejeitadas, de serviços ativos atribuídos ao setor. Uma proposta rejeitada retorna à revisão. O administrador pode publicar uma nova versão de uma pergunta ativa. Os serviços associados e os questionários já iniciados são preservados. Envie a versão atual para evitar sobrescrever uma edição concorrente.',
+  { 200: response('Versão salva.', ref('QuestionVersion'), { ...questionStamp, version: 2 }, 'Nova versão da pergunta salva.'),
+    401: missingJwt, 403: forbidden, 404: questionMissing, 409: error('Versão desatualizada ou edição vedada pelo status.', 'A pergunta foi alterada. Reabra a edição e tente novamente.'),
+    422: invalidData, 500: failure },
+  { operationId: 'updateQuestion', security: bearer, parameters: questionParameters, requestBody: body('QuestionEdit', {
+    version: 1, changeReason: 'Melhorar a clareza do enunciado.', prompt: 'Como você avalia a orientação no atendimento?', type: 'rating', required: false,
+  }) });
+
+add('/api/v1/questions/{id}/status', 'patch', 'approvals', 'Arquivar ou reabrir a revisão de uma pergunta',
+  'Exige questions.update. Defina active como false para arquivar uma pergunta ativa, ou como true para que uma pergunta inativa volte ao status pendente. Pesquisas já iniciadas mantêm suas perguntas. A volta à pesquisa exige nova aprovação.',
+  { 200: response('Status salvo.', ref('QuestionState'), { ...questionStamp, status: 'inactive' }, 'Pergunta arquivada.'),
+    401: missingJwt, 403: forbidden, 404: questionMissing, 409: error('Transição vedada.', 'O status atual não permite esta transição.'),
+    422: invalidData, 500: failure },
+  { operationId: 'setQuestionStatus', security: bearer, parameters: questionParameters, requestBody: body('StatusInput', { active: false }) });
 
 for (const [action, permission, summary, status] of [
   ['approve', 'questions.approve', 'Aprovar e ativar uma pergunta', 'active'],
@@ -354,7 +408,7 @@ export default {
   openapi: '3.0.3',
   info: {
     title: 'API Ouvidoria FHDOD',
-    version: '1.1.0',
+    version: '1.2.0',
     description: [
       'API de pesquisa de satisfação hospitalar. Use o Swagger aberto no servidor que pretende testar.',
       'Para a equipe: execute **Iniciar sessão** com sua conta de demonstração. Em **Authorize**, cole somente o accessToken no esquema bearerAuth. A permissão dashboard.read é exigida no dashboard. O papel de setor do seed não recebe dashboard.read nem users.manage.',
