@@ -12,6 +12,7 @@ const tags = {
   answers: 'Respostas e avaliações',
   feedback: 'Elogios e sugestões',
   returns: 'Solicitações de retorno',
+  reports: 'Relatórios e exportações',
   dashboard: 'Dashboard e indicadores',
   tv: 'Painel de TV',
   health: 'Status e saúde da API',
@@ -70,6 +71,20 @@ const integerQuery = (name, value, description, minimum, maximum) => ({
 });
 const searchQuery = { name: 'search', in: 'query', description: 'Busca por trecho do nome ou do enunciado.', schema: { type: 'string', maxLength: 120 }, example: 'Fictício' };
 const statusQuery = (values) => ({ name: 'status', in: 'query', description: 'Filtra pelo status.', schema: { type: 'string', enum: values } });
+const dateQuery = (name, description) => ({ name, in: 'query', description, schema: { type: 'string', format: 'date' }, example: '2026-01-15' });
+const periodQueries = [
+  dateQuery('from', 'Data inicial inclusiva no calendário UTC.'),
+  dateQuery('to', 'Data final inclusiva no calendário UTC.'),
+];
+const analysisQueries = [
+  ...periodQueries,
+  ...[['sectorId', ids.sector, 'setor'], ['serviceId', ids.service, 'serviço'], ['stageId', ids.stage, 'etapa']].map(([name, example, label]) =>
+    ({ name, in: 'query', description: 'UUID de ' + label + ' retornado nas opções de análise.', schema: uuid, example })),
+  { name: 'score', in: 'query', description: 'Filtra pela nota individual da resposta, de 1 a 5.', schema: { type: 'integer', minimum: 1, maximum: 5 }, example: 5 },
+  { ...searchQuery, description: 'Busca por trecho do código da pesquisa, do nome do setor ou do serviço.' },
+];
+const analysisPaging = [integerQuery('page', 1, 'Número da página.', 1, 1000000), integerQuery('limit', 20, 'Itens por página.', 1, 100)];
+const sortQuery = (values) => ({ name: 'sort', in: 'query', description: 'Ordenação.', schema: { type: 'string', enum: values, default: 'recent' } });
 const pageResponse = (entity, example, description) => ({
   description,
   content: media(object({
@@ -242,21 +257,94 @@ surveyOperation('/complete', 'post', 'answers', 'Finalizar pesquisa de satisfaç
     422: error('Nota geral inválida ou perguntas obrigatórias pendentes.', 'Existem perguntas obrigatórias sem resposta.'),
   }, { operationId: 'completeSurvey', requestBody: body('Completion', { overallRating: 9 }, false) });
 
+const dashboardExample = { surveys: { total: 1, completed: '1' }, total: 1, answers: 5, averageRating: '4.60', positiveAnswers: 4, ratedAnswers: 5 };
 add('/api/v1/admin/dashboard/overview', 'get', 'dashboard', 'Consultar resumo do dashboard',
-  'Exige JWT Bearer com dashboard.read. Mostra totais globais, sem filtros de período. A média usa as notas das respostas individuais, e não a nota geral de encerramento.',
+  'Exige JWT Bearer com dashboard.read. Considera pesquisas concluídas, com os mesmos filtros e cálculo de média das avaliações e dos relatórios. A média usa as notas das respostas individuais de 1 a 5.',
   {
-    200: response('Resumo dos indicadores.', ref('DashboardOverview'), { surveys: { total: 2, completed: '1' }, answers: 5, averageRating: '4.60', positiveAnswers: 4, ratedAnswers: 5 }),
-    401: missingJwt, 403: forbidden, 500: failure,
-  }, { operationId: 'getDashboardOverview', security: bearer });
+    200: response('Resumo dos indicadores.', ref('DashboardOverview'), dashboardExample),
+    401: missingJwt, 403: forbidden, 422: invalidData, 500: failure,
+  }, { operationId: 'getDashboardOverview', security: bearer, parameters: analysisQueries });
 
 const dimensions = {
   sectors: 'setores', services: 'serviços', teams: 'equipes', stages: 'etapas', shifts: 'turnos',
 };
 for (const [key, label] of Object.entries(dimensions)) {
   add('/api/v1/admin/dashboard/' + key, 'get', 'dashboard', 'Consultar indicadores por ' + label,
-    'Exige JWT Bearer com dashboard.read. Agrupa respostas com vínculo à dimensão e retorna quantidade e média das notas. Categorias sem respostas vinculadas não aparecem.',
-    { 200: response('Indicadores agrupados.', list(ref('Dimension')), [{ label: 'Grupo fictício', responses: 8, averageRating: '4.25' }]), 401: missingJwt, 403: forbidden, 500: failure },
-    { operationId: 'getDashboard_' + key, security: bearer });
+    'Exige JWT Bearer com dashboard.read. Agrupa respostas de pesquisas concluídas, após aplicar os mesmos filtros das avaliações e dos relatórios.',
+    { 200: response('Indicadores agrupados.', list(ref('Dimension')), [{ label: 'Grupo fictício', evaluations: 2, responses: 8, averageRating: '4.25' }]), 401: missingJwt, 403: forbidden, 422: invalidData, 500: failure },
+    { operationId: 'getDashboard_' + key, security: bearer, parameters: analysisQueries });
+}
+
+const administrativeErrors = { 401: missingJwt, 403: forbidden, 422: invalidData, 500: failure };
+add('/api/v1/admin/analysis/options', 'get', 'answers', 'Listar setores, serviços e etapas para os filtros',
+  'Exige surveys.read, reports.export ou perfil de setor. Retorna opções com histórico de pesquisas concluídas. Usuários de setor veem somente opções dos atendimentos que podem consultar.',
+  { 200: response('Opções de análise.', ref('AnalysisOptions'), {
+    sectors: [{ id: ids.sector, name: 'Setor Fictício' }],
+    services: [{ id: ids.service, name: 'Serviço Fictício', sectorId: ids.sector }],
+    stages: [{ id: ids.stage, name: 'Recepção' }],
+  }), 401: missingJwt, 403: forbidden, 500: failure },
+  { operationId: 'listAnalysisOptions', security: bearer });
+
+const evaluationExample = {
+  id: ids.survey, completedDate: '2026-01-15', overallRating: 9,
+  attendances: 'Setor Fictício · Serviço Fictício', averageRating: '4.60', answers: 5,
+};
+const evaluationPage = pageResponse('EvaluationRow', evaluationExample, 'Página de avaliações concluídas e indicadores da seleção.');
+const evaluationMedia = evaluationPage.content['application/json'];
+Object.assign(evaluationMedia.schema.properties, { summary: ref('DashboardOverview'), distribution: list(ref('RatingCount')) });
+evaluationMedia.schema.required.push('summary', 'distribution');
+Object.assign(evaluationMedia.example, { summary: dashboardExample, distribution: [{ score: 4, responses: 2 }, { score: 5, responses: 3 }] });
+add('/api/v1/admin/evaluations', 'get', 'answers', 'Listar avaliações concluídas',
+  'Exige surveys.read. Retorna uma página anônima, com total, média e distribuição de todas as avaliações que correspondem aos filtros. No filtro por etapa ou nota, a média usa as respostas correspondentes. O período se refere à data de conclusão.',
+  { 200: evaluationPage, ...administrativeErrors }, { operationId: 'listEvaluations', security: bearer,
+    parameters: [...analysisQueries, ...analysisPaging, sortQuery(['recent', 'oldest', 'highest', 'lowest'])] });
+
+add('/api/v1/admin/evaluations/{id}', 'get', 'answers', 'Consultar detalhe anônimo de uma avaliação',
+  'Exige surveys.read. Exibe a data, os atendimentos, a nota geral, notas individuais e rótulos das opções selecionadas. Respostas de texto livre são representadas por uma indicação de presença. Os dados de contato são tratados em outro fluxo com permissão específica.',
+  { 200: response('Avaliação encontrada.', ref('EvaluationDetail'), {
+    id: ids.survey, completedDate: '2026-01-15', overallRating: 9,
+    attendances: [{ sector: 'Setor Fictício', service: 'Serviço Fictício', shift: 'Manhã' }],
+    answers: [{ id: ids.question, prompt: question.text, type: 'rating', rating: '5.00', stage: 'Recepção', service: 'Serviço Fictício', hasText: false, options: [] }],
+  }), 404: error('Avaliação inexistente ou fora dos filtros.', 'Avaliação não encontrada para os filtros selecionados.'), ...administrativeErrors },
+  { operationId: 'getEvaluation', security: bearer, parameters: [surveyId, ...analysisQueries] });
+
+add('/api/v1/admin/feedback', 'get', 'feedback', 'Listar elogios, sugestões e outros comentários',
+  'Exige surveys.read ou perfil de setor. O setor recebe comentários somente de pesquisas cujos atendimentos estão integralmente em seus setores autorizados. Separa os quatro campos existentes e mascara e-mails, telefones e CPF. A data de apresentação do comentário é a data de registro.',
+  { 200: pageResponse('FeedbackEntry', { id: fictitiousId(19) + ':praise', kind: 'praise', content: 'A recepção fictícia foi atenciosa.', receivedDate: '2026-01-15' }, 'Página de comentários.'), ...administrativeErrors },
+  { operationId: 'listFeedback', security: bearer, parameters: [
+    ...analysisQueries, ...analysisPaging, sortQuery(['recent', 'oldest']),
+    { name: 'kind', in: 'query', description: 'Tipo de comentário.', schema: { type: 'string', enum: ['praise', 'positive', 'suggestion', 'negative'] } },
+  ] });
+
+const returnId = fictitiousId(20);
+const returnParam = idParameter('id', returnId, 'UUID da solicitação retornado na listagem.');
+const returnMissing = error('Solicitação inexistente ou fora do escopo.', 'Solicitação de retorno não encontrada.');
+add('/api/v1/admin/return-requests', 'get', 'returns', 'Listar solicitações de retorno',
+  'Exige return_requests.manage. Inclui solicitações de pesquisas concluídas. A listagem omite nome, contato e mensagem. O período filtra pela data de registro da solicitação.',
+  { 200: pageResponse('ReturnItem', { id: returnId, status: 'open', createdAt: '2026-01-15T13:00:00.000Z' }, 'Página de solicitações.'), ...administrativeErrors },
+  { operationId: 'listReturnRequests', security: bearer, parameters: [...periodQueries, ...analysisPaging, statusQuery(['open', 'in_progress', 'closed'])] });
+
+add('/api/v1/admin/return-requests/{id}/contact', 'get', 'returns', 'Revelar contato de uma solicitação',
+  'Exige return_requests.manage. Exposição sob demanda com registro de auditoria por usuário e solicitação. A resposta usa Cache-Control privado sem armazenamento.',
+  { 200: response('Contato autorizado.', ref('ReturnContact'), {
+    id: returnId, status: 'open', name: 'Pessoa Fictícia', contact: 'retorno@example.invalid', preferredChannel: 'email', message: 'Pedido fictício.',
+  }), 404: returnMissing, ...administrativeErrors },
+  { operationId: 'revealReturnContact', security: bearer, parameters: [returnParam] });
+
+add('/api/v1/admin/return-requests/{id}/status', 'patch', 'returns', 'Alterar situação de uma solicitação',
+  'Exige return_requests.manage. A transição é pendente (open), em atendimento (in_progress) e concluída (closed). Repetir o status atual é idempotente. A alteração é auditada e não dispara mensagens.',
+  { 200: response('Situação atualizada.', ref('ReturnStatusUpdate'), { id: returnId, status: 'in_progress' }, 'Situação da solicitação atualizada.'),
+    404: returnMissing, 409: error('Transição de situação inválida.', 'A solicitação deve seguir a ordem pendente, em atendimento e concluída.'), ...administrativeErrors },
+  { operationId: 'updateReturnStatus', security: bearer, parameters: [returnParam], requestBody: body('ReturnStatusInput', { status: 'in_progress' }) });
+
+for (const [format, label, mime] of [
+  ['excel', 'Excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+  ['pdf', 'PDF', 'application/pdf'],
+]) {
+  add('/api/v1/admin/reports/' + format, 'get', 'reports', 'Baixar relatório em ' + label,
+    'Exige reports.export. O arquivo contém período, quantidade de avaliações, satisfação média, distribuição, indicadores por dimensão e contagens de feedback. Comentários livres e contatos ficam fora do arquivo. Os filtros são os mesmos das avaliações.',
+    { 200: { description: 'Relatório para download.', content: { [mime]: { schema: { type: 'string', format: 'binary' } } } }, ...administrativeErrors },
+    { operationId: format === 'pdf' ? 'downloadReportPdf' : 'downloadReportExcel', security: bearer, parameters: analysisQueries });
 }
 
 const resources = {
@@ -408,7 +496,7 @@ export default {
   openapi: '3.0.3',
   info: {
     title: 'API Ouvidoria FHDOD',
-    version: '1.2.0',
+    version: '1.3.0',
     description: [
       'API de pesquisa de satisfação hospitalar. Use o Swagger aberto no servidor que pretende testar.',
       'Para a equipe: execute **Iniciar sessão** com sua conta de demonstração. Em **Authorize**, cole somente o accessToken no esquema bearerAuth. A permissão dashboard.read é exigida no dashboard. O papel de setor do seed não recebe dashboard.read nem users.manage.',

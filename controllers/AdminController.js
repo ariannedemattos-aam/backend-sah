@@ -4,6 +4,7 @@ import pool from '../config/database.js';
 import { ok, paginated } from '../utils/response.js';
 import { AppError } from '../utils/errors.js';
 import { withTransaction } from '../utils/withTransaction.js';
+import { dimension, filtersSchema, selections, summary } from '../services/EvaluationData.js';
 
 const resourceColumns = {
   sectors: 'id,name,slug,description,is_active,created_at,updated_at',
@@ -146,27 +147,10 @@ export async function setStatus(req, res, resource) {
   ok(res, { id, active }, active ? 'Registro reativado.' : 'Registro arquivado.');
 }
 
-export async function overview(_req, res) {
-  const [[[surveys]], [[rating]]] = await Promise.all([
-    pool.query("SELECT COUNT(*) total, SUM(status='completed') completed FROM surveys"),
-    pool.query('SELECT COUNT(*) total, ROUND(AVG(rating_value),2) average, COUNT(CASE WHEN rating_value >= 4 THEN 1 END) positive, COUNT(rating_value) rated FROM answers'),
-  ]);
-  ok(res, { surveys, answers: rating.total, averageRating: rating.average, positiveAnswers: rating.positive, ratedAnswers: rating.rated });
+export async function overview(req, res) {
+  ok(res, await summary(pool, selections(filtersSchema.parse(req.query), req.user)));
 }
 
-const dimensionsByKey = { sectors: 's', services: 'sv', teams: 't', stages: 'st', shifts: 'sh' };
-export async function dimensions(_req, res, dimension) {
-  const field = dimensionsByKey[dimension];
-  const sql = [
-    'SELECT ' + field + '.name label, COUNT(a.id) responses, ROUND(AVG(a.rating_value),2) averageRating',
-    'FROM answers a JOIN survey_questions sq ON sq.id=a.survey_question_id',
-    'JOIN survey_attendances sa ON sa.id=sq.attendance_id',
-    'LEFT JOIN sectors s ON s.id=sa.sector_id LEFT JOIN services sv ON sv.id=sa.service_id',
-    'LEFT JOIN shifts sh ON sh.id=sa.shift_id LEFT JOIN questions q ON q.id=sq.question_id',
-    'LEFT JOIN teams t ON t.id=q.team_id LEFT JOIN stages st ON st.id=q.stage_id',
-    'WHERE ' + field + '.id IS NOT NULL',
-    'GROUP BY ' + field + '.id,' + field + '.name ORDER BY responses DESC, label',
-  ].join(' ');
-  const [data] = await pool.query(sql);
-  ok(res, data);
+export async function dimensions(req, res, key) {
+  ok(res, await dimension(pool, selections(filtersSchema.parse(req.query), req.user), key));
 }
