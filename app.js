@@ -16,6 +16,10 @@ app.use(express.json({ limit: '100kb' }));
 app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, limit: 500, standardHeaders: true, legacyHeaders: false }));
 app.get('/health', (_req, res) => res.json({ success: true, message: 'API operacional', data: { status: 'ok' } }));
 app.use('/api/v1', routes);
-if (env.swaggerEnabled) { app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec)); app.get('/api-docs.json', (_req, res) => res.json(swaggerSpec)); }
+if (env.swaggerEnabled) {
+  const swaggerOptions = { persistAuthorization: false, validatorUrl: null };
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, { swaggerOptions }));
+  app.get('/api-docs.json', (_req, res) => res.json(swaggerSpec));
+}
 app.use(notFound); app.use(errorHandler);
 export default app;
