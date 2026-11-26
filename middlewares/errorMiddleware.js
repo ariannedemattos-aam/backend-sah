@@ -1,7 +1,7 @@
 import { ZodError } from 'zod';
 import { AppError } from '../utils/errors.js';
 
-const unavailable = new Set(['ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'ECONNRESET', 'PROTOCOL_CONNECTION_LOST', 'ER_CON_COUNT_ERROR']);
+const unavailable = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'EPIPE', 'ECONNRESET', 'PROTOCOL_CONNECTION_LOST', 'ER_CON_COUNT_ERROR']);
 export const notFound = (_req, res) => res.status(404).json({ success: false, message: 'Recurso não encontrado.' });
 
 export function errorHandler(error, req, res, next) {

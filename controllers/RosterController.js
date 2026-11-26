@@ -92,11 +92,14 @@ export async function saveShift(req, res) {
 }
 
 export async function teamIndicators(req, res) {
-  const filters = z.object({ from: z.iso.date().optional(), to: z.iso.date().optional(), sectorId: uuid.optional() }).parse(req.query);
+  const filters = z.object({ from: z.iso.date().optional(), to: z.iso.date().optional(), sectorId: uuid.optional(),
+    shiftId: uuid.optional(), serviceId: uuid.optional(), teamId: uuid.optional() }).parse(req.query);
   if (filters.from && filters.to && filters.from > filters.to) throw new AppError('Período inválido.', 422);
   const clauses = ["s.status='completed'", 's.overall_rating IS NOT NULL'], params = [];
   periodConditions(filters, 'a.attendance_date', clauses, params);
-  if (filters.sectorId) { clauses.push('a.sector_id=?'); params.push(filters.sectorId); }
+  for (const [key, column] of [['sectorId','a.sector_id'],['shiftId','a.shift_id'],['serviceId','a.service_id'],['teamId','rs.team_id']]) {
+    if (filters[key]) { clauses.push(column + '=?'); params.push(filters[key]); }
+  }
   const [rows] = await pool.execute(
     'WITH linked AS (SELECT DISTINCT s.id,s.overall_rating,rs.team_id FROM survey_attendances a '
       + 'JOIN surveys s ON s.id=a.survey_id JOIN roster_shifts rs ON rs.sector_id=a.sector_id AND rs.shift_id=a.shift_id AND rs.work_date=a.attendance_date'

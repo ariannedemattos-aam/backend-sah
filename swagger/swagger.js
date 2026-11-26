@@ -88,6 +88,9 @@ const analysisQueries = [
   { name: 'score', in: 'query', description: 'Filtra pela nota individual da resposta, de 1 a 5.', schema: { type: 'integer', minimum: 1, maximum: 5 }, example: 5 },
   { ...searchQuery, description: 'Busca por trecho do código da pesquisa, do nome do setor ou do serviço.' },
 ];
+const shiftQuery = { name:'shiftId', in:'query', schema:uuid, description:'UUID do turno do atendimento.', example:ids.shift };
+const teamQuery = { name:'teamId', in:'query', schema:uuid, description:'UUID da equipe vinculada pela escala, em setor, data e turno.' };
+const dashboardQueries = [...analysisQueries, shiftQuery, teamQuery];
 const analysisPaging = [integerQuery('page', 1, 'Número da página.', 1, 1000000), integerQuery('limit', 20, 'Itens por página.', 1, 100)];
 const sortQuery = (values) => ({ name: 'sort', in: 'query', description: 'Ordenação.', schema: { type: 'string', enum: values, default: 'recent' } });
 const pageResponse = (entity, example, description) => ({
@@ -270,7 +273,7 @@ add('/api/v1/admin/dashboard/overview', 'get', 'dashboard', 'Consultar resumo do
   {
     200: response('Resumo dos indicadores.', ref('DashboardOverview'), dashboardExample),
     401: missingJwt, 403: forbidden, 422: invalidData, 500: failure,
-  }, { operationId: 'getDashboardOverview', security: bearer, parameters: analysisQueries });
+  }, { operationId: 'getDashboardOverview', security: bearer, parameters: dashboardQueries });
 
 const dimensions = {
   sectors: 'setores', services: 'serviços', teams: 'equipes', stages: 'etapas', shifts: 'turnos',
@@ -279,7 +282,7 @@ for (const [key, label] of Object.entries(dimensions)) {
   add('/api/v1/admin/dashboard/' + key, 'get', 'dashboard', 'Consultar indicadores por ' + label,
     'Exige JWT Bearer com dashboard.read. Agrupa respostas de pesquisas concluídas, após aplicar os mesmos filtros das avaliações e dos relatórios.',
     { 200: response('Indicadores agrupados.', list(ref('Dimension')), [{ label: 'Grupo fictício', evaluations: 2, responses: 8, averageRating: '4.25' }]), 401: missingJwt, 403: forbidden, 422: invalidData, 500: failure },
-    { operationId: 'getDashboard_' + key, security: bearer, parameters: analysisQueries });
+    { operationId: 'getDashboard_' + key, security: bearer, parameters: dashboardQueries });
 }
 
 const administrativeErrors = { 401: missingJwt, 403: forbidden, 422: invalidData, 500: failure };
@@ -618,7 +621,8 @@ operational('admin/roster/shifts','put','roster','saveRosterShift','Salvar equip
 operational('admin/dashboard/roster-teams','get','roster','getRosterIndicators','Consultar indicadores por equipe da escala',
   'Exige dashboard.read. Usa setor, data de atendimento e turno. A média geral (0–10) exige pelo menos três pesquisas distintas. Retorna somente agregados por equipe.',
   response('Indicadores.',list(ref('RosterIndicator')),[{id:teamId,label:'Equipe Fictícia',evaluations:3,averageOverall:'7.00'}]),null,
-  {parameters:[...periodQueries,sectorQuery]});
+  {parameters:[...periodQueries.map(p=>({...p,description:p.description+' Refere-se à data do atendimento.'})),sectorQuery,shiftQuery,teamQuery,
+    {name:'serviceId',in:'query',schema:uuid,description:'UUID do serviço do atendimento.'}]});
 operational('admin/ombudsman','get','ombudsman','listOmbudsmanCases','Listar manifestações',
   'Exige ombudsman.manage. Inclui nota até 6, reclamação ou retorno solicitado. Os filtros usam a data da manifestação e os setores do atendimento.',
   pageResponse('OmbudsmanItem',manifestation,'Página de manifestações sem dados de contato.'),null,
@@ -651,11 +655,15 @@ operational('admin/services/{id}/stages','put','services','configureServiceStage
   'JourneyStages',{stageIds:[ids.stage]},{parameters:[idParameter('id',ids.service,'UUID do serviço.')],
     requestBody:body('JourneyStages',{stageIds:[ids.stage]}),errors:{404:error('Serviço inexistente.'),409:error('Serviço arquivado.')}});
 
+operational('admin/dashboard/options','get','dashboard','getDashboardOptions','Consultar opções dos filtros do dashboard',
+  'Exige dashboard.read. Retorna apenas identificadores e nomes de catálogos ativos, sem dados individuais.',
+  'DashboardOptions',{sectors:[{id:ids.sector,name:'Setor fictício'}],services:[],shifts:[],teams:[]});
+
 export default {
   openapi: '3.0.3',
   info: {
     title: 'API Ouvidoria FHDOD',
-    version: '1.7.0',
+    version: '1.8.0',
     description: [
       'API de pesquisa de satisfação hospitalar. Use o Swagger aberto no servidor que pretende testar.',
       'Para testar no Swagger, use o login JSON em /api/v1/auth/login. O site usa as rotas /auth/web via proxy de mesma origem com cookie próprio. Em **Authorize**, cole somente o accessToken no esquema bearerAuth. A permissão dashboard.read é exigida no dashboard. O papel de setor do seed não recebe dashboard.read nem users.manage.',

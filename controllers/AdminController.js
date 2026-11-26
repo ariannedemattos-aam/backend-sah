@@ -4,7 +4,7 @@ import pool from '../config/database.js';
 import { ok, paginated } from '../utils/response.js';
 import { AppError } from '../utils/errors.js';
 import { withTransaction } from '../utils/withTransaction.js';
-import { dimension, filtersSchema, selections, summary } from '../services/EvaluationData.js';
+import { dimension, dashboardFilters, selections, summary } from '../services/EvaluationData.js';
 
 const resourceColumns = {
   sectors: 'id,name,slug,description,is_active,created_at,updated_at',
@@ -176,10 +176,20 @@ export async function setServiceStages(req, res) {
   ok(res, { stageIds }, 'Etapas da jornada atualizadas.');
 }
 
+export async function dashboardOptions(_req, res) {
+  const [[sectors], [services], [shifts], [teams]] = await Promise.all([
+    pool.execute('SELECT id,name FROM sectors WHERE is_active=1 ORDER BY name,id'),
+    pool.execute('SELECT id,name,sector_id sectorId FROM services WHERE is_active=1 AND sector_id IN (SELECT id FROM sectors WHERE is_active=1) ORDER BY name,id'),
+    pool.execute('SELECT id,name FROM shifts WHERE is_active=1 ORDER BY display_order,name,id'),
+    pool.execute('SELECT id,name,sector_id sectorId FROM teams WHERE is_active=1 AND sector_id IN (SELECT id FROM sectors WHERE is_active=1) ORDER BY name,id'),
+  ]);
+  ok(res, { sectors, services, shifts, teams });
+}
+
 export async function overview(req, res) {
-  ok(res, await summary(pool, selections(filtersSchema.parse(req.query), req.user)));
+  ok(res, await summary(pool, selections(dashboardFilters.parse(req.query), req.user)));
 }
 
 export async function dimensions(req, res, key) {
-  ok(res, await dimension(pool, selections(filtersSchema.parse(req.query), req.user), key));
+  ok(res, await dimension(pool, selections(dashboardFilters.parse(req.query), req.user), key));
 }

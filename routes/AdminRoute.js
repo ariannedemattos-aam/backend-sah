@@ -46,6 +46,7 @@ router.get('/reports/pdf', reports, noStore, asyncRoute(exportReport('pdf')));
 router.get('/invitations', invitations, noStore, asyncRoute(invitation.list));
 router.post('/invitations', invitations, noStore, asyncRoute(invitation.create));
 router.post('/invitations/:id/communications', invitations, noStore, asyncRoute(invitation.communicate));
+router.get('/dashboard/options', dashboard, asyncRoute(admin.dashboardOptions));
 router.get('/dashboard/overview', dashboard, asyncRoute(admin.overview));
 
 for (const dimension of ['sectors', 'services', 'teams', 'stages', 'shifts']) {

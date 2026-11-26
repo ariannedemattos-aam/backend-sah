@@ -229,6 +229,7 @@ Object.assign(schemas, {
   JourneyStages: object({ stageIds:{...list(uuid),maxItems:50,uniqueItems:true} }, ['stageIds']),
   RosterStaffInput: object(rosterStaff, ['sectorId','name']),
   RosterStaff: sectorNamed,
+  DashboardOptions: object({ sectors:list(ref('Shift')), services:list(sectorNamed), shifts:list(ref('Shift')), teams:list(sectorNamed) }, ['sectors','services','shifts','teams']),
   RosterOptions: object({ sectors:list(ref('Shift')), shifts:list(ref('Shift')), teams:list(sectorNamed), staff:list(sectorNamed) }, ['sectors','shifts','teams','staff']),
   RosterShiftInput: object({ ...rosterKey, staffIds:{...list(uuid),maxItems:50,uniqueItems:true} }, ['sectorId','date','shiftId','teamId','staffIds']),
   RosterShift: object({ ...rosterKey, sector:string, team:string, shift:string, staff:list(ref('Shift')) }, ['sectorId','date','shiftId','teamId','sector','team','shift','staff']),

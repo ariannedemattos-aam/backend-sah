@@ -79,6 +79,7 @@ try {
   }
   const matrix=[
     ['/admin/dashboard/overview',['userAdmin','gestao','visualizador']],
+    ['/admin/dashboard/options',['userAdmin','gestao','visualizador']],
     ['/admin/roster/options',['userAdmin','gestao','userSetor']],
     ['/admin/ombudsman',['userAdmin','ouvidoria']],
     ['/admin/return-requests',['userAdmin','ouvidoria']],
@@ -176,6 +177,10 @@ try {
   const aggregate=(await request('GET',query,200,undefined,accounts.visualizador.accessToken)).data[0];
   assert.equal(aggregate.evaluations,3);
   assert.equal(Number(aggregate.averageOverall),6);
+  const filter='/admin/dashboard/overview?sectorId='+targets.sector+'&shiftId='+shiftId+'&teamId='+targets.team;
+  assert.equal(Number((await request('GET',filter,200,undefined,manager)).data.total),3);
+  assert.equal(Number((await request('GET',filter+'&from=2001-01-01&to=2001-12-31',200,undefined,manager)).data.total),0);
+  await request('GET',filter+'&teamId=invalid',422,undefined,manager);
   assert.deepEqual(Object.keys(aggregate).sort(),['averageOverall','evaluations','id','label']);
   await request('PUT','/admin/users/'+accounts.visualizador.user.id+'/access',200,{role:'gestao',sectorIds:[]},jwt);
   await request('GET','/auth/me',401,undefined,accounts.visualizador.accessToken);

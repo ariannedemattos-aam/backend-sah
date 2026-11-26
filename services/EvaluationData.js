@@ -28,6 +28,10 @@ const validPeriod = (value, context) => {
   }
 };
 export const filtersSchema = reportFilters.superRefine(validPeriod);
+export const dashboardFilters = reportFilters.extend({
+  shiftId: identifier.optional(),
+  teamId: identifier.optional(),
+}).superRefine(validPeriod);
 export const evaluationListSchema = reportFilters.extend({
   ...pagination,
   sort: z.enum(['recent', 'oldest', 'highest', 'lowest']).default('recent'),
@@ -63,6 +67,11 @@ export function attendanceFilter(filters, user) {
   const conditions = [], params = [];
   if (filters.sectorId) { conditions.push('a.sector_id=?'); params.push(filters.sectorId); }
   if (filters.serviceId) { conditions.push('a.service_id=?'); params.push(filters.serviceId); }
+  if (filters.shiftId) { conditions.push('a.shift_id=?'); params.push(filters.shiftId); }
+  if (filters.teamId) {
+    conditions.push('EXISTS (SELECT 1 FROM roster_shifts rs WHERE rs.sector_id=a.sector_id AND rs.work_date=a.attendance_date AND rs.shift_id=a.shift_id AND rs.team_id=?)');
+    params.push(filters.teamId);
+  }
   if (isSector(user)) {
     conditions.push('EXISTS (SELECT 1 FROM user_sectors us WHERE us.sector_id=a.sector_id AND us.user_id=?)');
     params.push(user.sub);
