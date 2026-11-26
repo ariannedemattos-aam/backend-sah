@@ -2,7 +2,7 @@ import http from 'node:http';
 import { Server } from 'socket.io';
 import app from './app.js';
 import { env } from './config/env.js';
-import { notificationRoom, setSocketServer } from './services/SocketService.js';
+import { notificationRoom, sessionRoom, setSocketServer } from './services/SocketService.js';
 import { verifyAccessToken } from './middlewares/authMiddleware.js';
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -10,9 +10,9 @@ const io = new Server(server, {
   allowRequest: (req, allow) => allow(null, !req.headers.origin || env.corsOrigins.includes(req.headers.origin)),
 });
 function authorizeSocket(permission) {
-  return (socket, next) => {
+  return async (socket, next) => {
     try {
-      const user = verifyAccessToken(socket.handshake.auth?.token);
+      const user = await verifyAccessToken(socket.handshake.auth?.token);
       if (!user.sub || !Number.isFinite(user.exp)) return next(new Error('Sessão inválida.'));
       if (permission && !user.permissions?.includes(permission)) return next(new Error('Acesso não autorizado.'));
       socket.data.user = user;
@@ -22,14 +22,22 @@ function authorizeSocket(permission) {
     }
   };
 }
-function joined(socket, room) {
-  socket.join(room);
+function joined(socket, room, permission) {
+  socket.join([room, sessionRoom(socket.data.user.sid)]);
   const expiry = setTimeout(() => socket.disconnect(false), Math.max(0, socket.data.user.exp * 1000 - Date.now()));
-  socket.once('disconnect', () => clearTimeout(expiry));
+  const recheck = setInterval(async () => {
+    try {
+      const user = await verifyAccessToken(socket.handshake.auth?.token);
+      if (permission && !user.permissions.includes(permission)) socket.disconnect(false);
+    } catch (error) {
+      if (error.status === 401) socket.disconnect(false);
+    }
+  }, 60000);
+  socket.once('disconnect', () => { clearTimeout(expiry); clearInterval(recheck); });
 }
 io.use(authorizeSocket('dashboard.read'));
 setSocketServer(io);
-io.on('connection', (socket) => joined(socket, 'dashboards'));
+io.on('connection', (socket) => joined(socket, 'dashboards', 'dashboard.read'));
 const notifications = io.of('/notifications');
 notifications.use(authorizeSocket());
 notifications.on('connection', (socket) => joined(socket, notificationRoom(socket.data.user.sub)));

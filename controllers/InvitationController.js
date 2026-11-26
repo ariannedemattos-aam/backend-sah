@@ -56,7 +56,9 @@ export async function list(req, res) {
   const { page, limit, channel, status } = filters.parse(req.query);
   const terms = [], params = [];
   if (channel) { terms.push('i.channel=?'); params.push(channel); }
-  if (status) { terms.push('(' + statusSql + ')=?'); params.push(status); }
+  if (status === 'used') terms.push('i.used_at IS NOT NULL');
+  if (status === 'active') terms.push('i.used_at IS NULL AND i.expires_at>UTC_TIMESTAMP()');
+  if (status === 'expired') terms.push('i.used_at IS NULL AND i.expires_at<=UTC_TIMESTAMP()');
   const where = terms.length ? ' WHERE ' + terms.join(' AND ') : '';
   const [[[count]], [data]] = await Promise.all([
     pool.execute('SELECT COUNT(*) total FROM invitations i' + where, params),

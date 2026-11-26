@@ -26,8 +26,8 @@ const catalogRecord = { ...catalogBase, description: nullable(string), is_active
 export const schemas = {
   Error: object({ success: { type: 'boolean', enum: [false] }, message: string, errors: list(object({ field: string, message: string }, ['field', 'message'])) }, ['success', 'message']),
   Health: object({ status: { type: 'string', enum: ['ok'] } }, ['status']),
-  Login: object({ email, password: { type: 'string', minLength: 8, format: 'password' } }, ['email', 'password']),
-  Refresh: object({ refreshToken: { ...token, minLength: 20 } }, ['refreshToken']),
+  Login: object({ email: { ...email, maxLength: 255 }, password: { type: 'string', minLength: 8, format: 'password', description: 'Até 72 bytes em UTF-8.' } }, ['email', 'password']),
+  Refresh: object({ refreshToken: { ...token, minLength: 20, maxLength: 4096 } }, ['refreshToken']),
   User: object({
     ...named, email, role: { type: 'string', example: 'userSetor' }, is_active: flag,
   }, ['id', 'name', 'email', 'role']),
@@ -35,6 +35,7 @@ export const schemas = {
     allOf: [ref('User'), object({ permissions: list(string) }, ['permissions'])],
   },
   Session: object({ user: ref('User'), accessToken: token, refreshToken: token }, ['user', 'accessToken', 'refreshToken']),
+  BrowserSession: object({ user: ref('User'), accessToken: token }, ['user', 'accessToken']),
   CatalogItem: object({ ...named, slug: nullable(string), description: nullable(string) }, ['id', 'name', 'slug', 'description']),
   Shift: object(named, ['id', 'name']),
   ServiceStage: object({

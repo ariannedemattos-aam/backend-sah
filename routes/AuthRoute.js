@@ -1,3 +1,12 @@
 import { asyncRoute } from '../utils/asyncRoute.js';
 import { Router } from 'express'; import * as c from '../controllers/AuthController.js'; import { authenticate } from '../middlewares/authMiddleware.js'; import { validate } from '../middlewares/validationMiddleware.js'; import { loginSchema, refreshSchema } from '../validators/authValidator.js';
-const router = Router(); router.post('/login', validate(loginSchema), asyncRoute(c.login)); router.post('/refresh', validate(refreshSchema), asyncRoute(c.refresh)); router.post('/logout', validate(refreshSchema), asyncRoute(c.logout)); router.get('/me', authenticate, asyncRoute(c.me)); export default router;
+const router = Router();
+router.use((_req, res, next) => { res.set('Cache-Control', 'private, no-store'); next(); });
+router.post('/login', validate(loginSchema), asyncRoute(c.login));
+router.post('/refresh', validate(refreshSchema), asyncRoute(c.refresh));
+router.post('/logout', validate(refreshSchema), asyncRoute(c.logout));
+router.get('/me', authenticate, c.me);
+router.post('/web/login', c.browserOrigin, validate(loginSchema), asyncRoute(c.webLogin));
+router.post('/web/refresh', c.browserOrigin, asyncRoute(c.webRefresh));
+router.post('/web/logout', c.browserOrigin, asyncRoute(c.webLogout));
+export default router;

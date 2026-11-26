@@ -35,7 +35,10 @@ const statusInput = z.object({ active: z.boolean() });
 const ratingOptions = ['Muito insatisfeito', 'Insatisfeito', 'Neutro', 'Satisfeito', 'Muito satisfeito'];
 
 const permitted = (user, permission) => user.permissions?.includes(permission);
-const canManage = user => ['questions.create', 'questions.update', 'questions.approve', 'questions.reject'].some(permission => permitted(user, permission));
+const isSector = user => user.role === 'userSetor';
+const canManage = user => !isSector(user)
+  && ['questions.create', 'questions.update', 'questions.approve', 'questions.reject'].some(permission => permitted(user, permission));
+const canEditAll = user => !isSector(user) && permitted(user, 'questions.update');
 const sectorMayEdit = (question, user) => permitted(user, 'questions.propose')
   && question.createdBy === user.sub && ['pending', 'rejected'].includes(question.status);
 
@@ -55,7 +58,7 @@ async function storeVersion(conn, { id, version, input, author, reason = null })
 }
 
 export async function catalog(req, res) {
-  const canManage = permitted(req.user, 'questions.create');
+  const canManage = !isSector(req.user) && permitted(req.user, 'questions.create');
   const [data] = await pool.execute(
     'SELECT v.id, v.name, s.name AS sectorName FROM services v JOIN sectors s ON s.id=v.sector_id '
       + 'WHERE v.is_active=1 AND s.is_active=1 '
@@ -88,7 +91,7 @@ export async function list(req, res) {
       + 'ORDER BY q.created_at DESC,q.id LIMIT ? OFFSET ?', [...values, limit, (page - 1) * limit]),
   ]);
   const data = rows.map(({ createdBy, ...question }) => ({
-    ...question, canEdit: Boolean(permitted(req.user, 'questions.update') || sectorMayEdit({ ...question, createdBy }, req.user)),
+    ...question, canEdit: Boolean(canEditAll(req.user) || sectorMayEdit({ ...question, createdBy }, req.user)),
   }));
   paginated(res, data, { page, limit, total: count.total, totalPages: Math.ceil(count.total / limit) });
 }
@@ -103,7 +106,7 @@ export async function propose(req, res) {
       [input.serviceId],
     );
     if (!service) throw new AppError('Serviço indisponível.', 422);
-    if (!permitted(req.user, 'questions.create')) {
+    if (isSector(req.user) || !permitted(req.user, 'questions.create')) {
       const [[membership]] = await conn.execute('SELECT 1 AS allowed FROM user_sectors WHERE user_id=? AND sector_id=?', [req.user.sub, service.sectorId]);
       if (!membership) throw new AppError('O serviço não pertence a um setor atribuído ao usuário.', 403);
     }
@@ -132,7 +135,7 @@ export async function get(req, res) {
   const [options] = await pool.execute('SELECT label FROM question_options WHERE question_version_id=? ORDER BY display_order,id', [versionId]);
   ok(res, {
     ...question,
-    canEdit: Boolean(permitted(req.user, 'questions.update') || sectorMayEdit(row, req.user)),
+    canEdit: Boolean(canEditAll(req.user) || sectorMayEdit(row, req.user)),
     options: options.map(option => option.label),
   });
 }
@@ -145,7 +148,7 @@ export async function update(req, res) {
       'SELECT status,created_by AS createdBy,current_version AS version FROM questions WHERE id=? FOR UPDATE', [id],
     );
     if (!current) throw new AppError('Pergunta não encontrada.', 404);
-    if (!permitted(req.user, 'questions.update')) {
+    if (!canEditAll(req.user)) {
       if (current.createdBy !== req.user.sub) throw new AppError('Pergunta não encontrada.', 404);
       if (!sectorMayEdit(current, req.user)) throw new AppError('Somente uma proposta pendente ou rejeitada pode ser editada pelo setor.', 409);
       const [[access]] = await conn.execute(
@@ -169,6 +172,7 @@ export async function update(req, res) {
 }
 
 export async function setStatus(req, res) {
+  if (isSector(req.user)) throw new AppError('Acesso não autorizado.', 403);
   const id = z.string().uuid().parse(req.params.id);
   const { active } = statusInput.parse(req.body);
   const status = active ? 'pending' : 'inactive';
@@ -186,6 +190,7 @@ export async function setStatus(req, res) {
 
 export function review(action) {
   return async (req, res) => {
+    if (isSector(req.user)) throw new AppError('Acesso não autorizado.', 403);
     const id = z.string().uuid().parse(req.params.id);
     const { justification } = reviewInput.parse(req.body);
     const status = action === 'approved' ? 'active' : 'rejected';

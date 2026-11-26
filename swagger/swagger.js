@@ -52,8 +52,8 @@ const error = (description, message = description, errors) => ({
   description,
   content: media(ref('Error'), { success: false, message, ...(errors && { errors }) }),
 });
-const badJson = error('JSON inválido.', 'Unexpected token in JSON at position 0');
-const tooLarge = error('Corpo acima do limite global de 100 KB.', 'request entity too large');
+const badJson = error('JSON inválido.', 'O corpo da requisição contém JSON inválido.');
+const tooLarge = error('Corpo acima do limite global de 100 KB.', 'O corpo da requisição excede o limite permitido.');
 const failure = error('Erro interno, inclusive erros de persistência quando aplicável.', 'Não foi possível realizar a operação.');
 const rateLimit = {
   description: 'Limite de 500 requisições por IP em 15 minutos para /api. A resposta padrão é texto.',
@@ -96,6 +96,8 @@ const pageResponse = (entity, example, description) => ({
 const surveyId = idParameter('id', ids.survey, 'ID da pesquisa retornado na criação.');
 const paths = {};
 
+const temporaryFailure = error('Falha temporária de dependência da API.', 'Serviço temporariamente indisponível. Tente novamente.');
+
 function add(path, method, group, summary, description, responses, {
   security = [], parameters = [], requestBody, operationId,
 } = {}) {
@@ -108,7 +110,7 @@ function add(path, method, group, summary, description, responses, {
     responses: {
       ...responses,
       ...(hasJson && { ...(!responses[400] && { 400: badJson }), 413: tooLarge }),
-      ...(path.startsWith('/api/') && { 429: rateLimit }),
+      ...(path.startsWith('/api/') && { 429: rateLimit, ...(!responses[503] && { 503: temporaryFailure }) }),
     },
   };
 }
@@ -128,7 +130,7 @@ add('/health', 'get', 'health', 'Verificar saúde da API',
   { operationId: 'checkHealth' });
 
 add('/api/v1/auth/login', 'post', 'auth', 'Iniciar sessão',
-  'Acesso público. Informe e-mail válido e senha com pelo menos oito caracteres. O papel e as permissões são atribuídos pelo servidor, sem parâmetro de seleção de perfil.',
+  'Acesso público. E-mail é normalizado; a senha deve ter pelo menos oito caracteres e até 72 bytes em UTF-8. O papel e as permissões são atribuídos pelo servidor. Limite de 30 tentativas por IP em 15 minutos.',
   {
     200: response('Sessão iniciada.', ref('Session'), session, 'Login realizado.'),
     401: error('Credenciais não reconhecidas.', 'E-mail ou senha inválidos.'),
@@ -138,19 +140,19 @@ add('/api/v1/auth/login', 'post', 'auth', 'Iniciar sessão',
   }, { operationId: 'login', requestBody: body('Login', loginExample) });
 
 add('/api/v1/auth/refresh', 'post', 'auth', 'Renovar sessão',
-  'Não exige Bearer. Envie no corpo o refreshToken válido da sessão, com no mínimo 20 caracteres. A renovação revoga o refresh token anterior.',
+  'Envie o refreshToken atual no corpo. A rotação é atômica e conserva o vencimento original da sessão. Reuso fora da janela de concorrência revoga a sessão. Limite de 160 chamadas por IP em 15 minutos.',
   {
     200: response('Sessão renovada.', ref('Session'), { ...session, user: {
       id: user.id, name: user.name, email: user.email, role: user.role,
     } }, 'Sessão renovada.'),
-    401: error('Refresh token inválido, expirado ou revogado.', 'Refresh token inválido.'),
-    403: error('Conta indisponível para renovar a sessão.', 'Usuário inativo.'),
+    401: error('Refresh token inválido, expirado ou revogado.', 'Sessão inválida ou expirada.'),
+    409: error('A credencial anterior foi usada durante a janela de concorrência.', 'A sessão foi renovada em outra aba. Tente novamente.'),
     422: error('Refresh token ausente ou abaixo do tamanho mínimo.', 'Dados inválidos.', [{ field: 'body.refreshToken', message: 'Required' }]),
     500: failure,
   }, { operationId: 'refreshSession', requestBody: body('Refresh', refreshExample) });
 
 add('/api/v1/auth/logout', 'post', 'auth', 'Encerrar sessão',
-  'Não exige Bearer. Revoga o refresh token informado, quando cadastrado. Um valor bem formatado não cadastrado também retorna 204. O access token já emitido continua válido até expirar.',
+  'Envie o refreshToken no corpo. Revoga a família da sessão e a API passa a recusar também o token de acesso associado. Um token bem formatado desconhecido retorna 204.',
   {
     204: noContent,
     422: error('Refresh token ausente ou abaixo do tamanho mínimo.', 'Dados inválidos.', [{ field: 'body.refreshToken', message: 'Required' }]),
@@ -158,7 +160,7 @@ add('/api/v1/auth/logout', 'post', 'auth', 'Encerrar sessão',
   }, { operationId: 'logout', requestBody: body('Refresh', refreshExample) });
 
 add('/api/v1/auth/me', 'get', 'users', 'Consultar identidade e permissões',
-  'JWT Bearer válido, sem permissão específica. Retorna dados da conta e permissões presentes no token.',
+  'JWT Bearer de sessão ativa, sem permissão específica. Retorna dados da conta e permissões atuais consultadas no banco.',
   {
     200: response('Identidade autenticada.', ref('Identity'), {
       id: user.id, name: user.name, email: user.email, role: user.role, permissions: ['questions.read', 'questions.propose'],
@@ -412,6 +414,26 @@ for (const [format, label, mime] of [
     { operationId: format === 'pdf' ? 'downloadReportPdf' : 'downloadReportExcel', security: bearer, parameters: analysisQueries });
 }
 
+const browserData = { user, accessToken: 'SUBSTITUA_PELO_ACCESS_TOKEN' };
+const originDenied = error('A origem do navegador não está autorizada.', 'Origem de sessão não autorizada.');
+const webSessionResponse = (description, message) => ({
+  ...response(description, ref('BrowserSession'), browserData, message),
+  headers: { 'Set-Cookie': { description: 'Credencial de renovação HttpOnly e SameSite=Strict, Secure em produção.', schema: { type: 'string' } } },
+});
+add('/api/v1/auth/web/login', 'post', 'auth', 'Iniciar sessão do navegador',
+  'Fluxo do site através do proxy de mesma origem. Exige Origin autorizada, normaliza o e-mail e entrega o refresh em um cookie HttpOnly. Para testar no Swagger, use o login JSON.',
+  { 200: webSessionResponse('Sessão iniciada.', 'Login realizado.'), 401: error('Credenciais inválidas.', 'E-mail ou senha inválidos.'),
+    403: originDenied, 422: invalidData, 500: failure },
+  { operationId: 'webLogin', requestBody: body('Login', loginExample) });
+add('/api/v1/auth/web/refresh', 'post', 'auth', 'Renovar sessão do navegador',
+  'Exige Origin autorizada e o cookie emitido no login web. Rotaciona a credencial com o vencimento original. Em 401, remove o cookie. O token de renovação fica fora do JSON.',
+  { 200: webSessionResponse('Sessão renovada.', 'Sessão renovada.'), 401: error('Sessão inválida ou expirada.'),
+    403: originDenied, 409: error('Rotação concorrente.', 'A sessão foi renovada em outra aba. Tente novamente.'), 500: failure },
+  { operationId: 'webRefresh' });
+add('/api/v1/auth/web/logout', 'post', 'auth', 'Encerrar sessão do navegador',
+  'Exige Origin autorizada. Revoga a sessão associada ao cookie, invalida o acesso associado, desconecta os sockets da sessão e remove o cookie.',
+  { 204: noContent, 403: originDenied, 500: failure }, { operationId: 'webLogout' });
+
 const resources = {
   sectors: { label: 'setores', name: 'Setor Fictício', entity: 'Sector', fields: { slug: 'setor-ficticio' } },
   services: { label: 'serviços', name: 'Serviço Fictício', entity: 'Service', fields: { slug: 'servico-ficticio', sector_id: ids.sector } },
@@ -561,10 +583,10 @@ export default {
   openapi: '3.0.3',
   info: {
     title: 'API Ouvidoria FHDOD',
-    version: '1.4.0',
+    version: '1.5.0',
     description: [
       'API de pesquisa de satisfação hospitalar. Use o Swagger aberto no servidor que pretende testar.',
-      'Para a equipe: execute **Iniciar sessão** com sua conta de demonstração. Em **Authorize**, cole somente o accessToken no esquema bearerAuth. A permissão dashboard.read é exigida no dashboard. O papel de setor do seed não recebe dashboard.read nem users.manage.',
+      'Para testar no Swagger, use o login JSON em /api/v1/auth/login. O site usa as rotas /auth/web via proxy de mesma origem com cookie próprio. Em **Authorize**, cole somente o accessToken no esquema bearerAuth. A permissão dashboard.read é exigida no dashboard. O papel de setor do seed não recebe dashboard.read nem users.manage.',
       'Para uma pessoa respondente: crie uma pesquisa, copie o id e autorize o esquema surveyToken com o valor retornado. Consulte setores, serviços e turnos, adicione um atendimento, inicie a pesquisa, liste as perguntas, responda e finalize.',
       'Os exemplos usam identificadores fictícios. Durante os testes, substitua os IDs pelos retornados pela API e informe somente dados de demonstração.',
       'Socket.IO: dashboard:update usa o canal padrão protegido por dashboard.read. notifications:update usa o namespace /notifications, exige JWT em auth.token e é entregue somente ao titular. O evento sinaliza que a central deve recarregar, sem transmitir conteúdo.',
