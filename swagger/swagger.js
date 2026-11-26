@@ -655,7 +655,7 @@ export default {
       'Para testar no Swagger, use o login JSON em /api/v1/auth/login. O site usa as rotas /auth/web via proxy de mesma origem com cookie próprio. Em **Authorize**, cole somente o accessToken no esquema bearerAuth. A permissão dashboard.read é exigida no dashboard. O papel de setor do seed não recebe dashboard.read nem users.manage.',
       'Para uma pessoa respondente: crie uma pesquisa, copie o id e autorize o esquema surveyToken com o valor retornado. Consulte setores, serviços e turnos, adicione um atendimento, inicie a pesquisa, liste as perguntas, responda e finalize.',
       'Os exemplos usam identificadores fictícios. Durante os testes, substitua os IDs pelos retornados pela API e informe somente dados de demonstração.',
-      'Socket.IO: dashboard:update usa o canal padrão protegido por dashboard.read. notifications:update usa o namespace /notifications, exige JWT em auth.token e é entregue somente ao titular. O evento sinaliza que a central deve recarregar, sem transmitir conteúdo.',
+      'Socket.IO: dashboard:update usa o canal padrão protegido por dashboard.read e divulga somente o tipo de atualização, sem ID de pesquisa. notifications:update usa o namespace /notifications, exige JWT em auth.token e é entregue somente ao titular. O evento sinaliza que a central deve recarregar, sem transmitir conteúdo.',
     ].join('\n\n'),
   },
   servers: [

@@ -272,7 +272,7 @@ export async function complete(req, res) {
     return { changed: true, recipients: [...new Set(recipients)] };
   });
   if (changed) {
-    emitDashboardUpdate({ surveyId: req.params.id, type: 'survey_completed' });
+    emitDashboardUpdate({ type: 'survey_completed' });
     emitNotificationUpdates(recipients);
   }
   ok(res, null, 'Pesquisa finalizada.');

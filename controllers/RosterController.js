@@ -3,6 +3,7 @@ import { z } from 'zod';
 import pool from '../config/database.js';
 import { AppError } from '../utils/errors.js';
 import { ok } from '../utils/response.js';
+import { emitDashboardUpdate } from '../services/SocketService.js';
 import { withTransaction } from '../utils/withTransaction.js';
 import { isSector, periodConditions, where } from '../services/EvaluationData.js';
 
@@ -86,6 +87,7 @@ export async function saveShift(req, res) {
     await conn.execute("INSERT INTO audit_logs (id,user_id,action,entity,entity_id,metadata) VALUES (UUID(),?,'roster.saved','team',?,?)",
       [req.user.sub, teamId, JSON.stringify({ sectorId, date, shiftId, professionals: staffIds.length })]);
   });
+  emitDashboardUpdate({ type: 'roster_saved' });
   ok(res, input, 'Escala atualizada.');
 }
 
