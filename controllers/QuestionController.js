@@ -111,7 +111,7 @@ export async function propose(req, res) {
       if (!membership) throw new AppError('O serviço não pertence a um setor atribuído ao usuário.', 403);
     }
     await conn.execute('INSERT INTO questions (id, created_by, type, status, is_required) VALUES (?,?,?,?,?)',
-      [id, req.user.sub, input.type, status, Number(input.required)]);
+      [id, req.user.sub, input.type, status, 0]);
     await storeVersion(conn, { id, version: 1, input, author: req.user.sub });
     await conn.execute('INSERT INTO question_assignments (id, question_id, sector_id, service_id, display_order) VALUES (UUID(),?,?,?,100)',
       [id, service.sectorId, input.serviceId]);
@@ -165,7 +165,7 @@ export async function update(req, res) {
     const status = ['rejected', 'approved'].includes(current.status) ? 'pending' : current.status;
     await storeVersion(conn, { id, version, input, author: req.user.sub, reason: input.changeReason });
     await conn.execute('UPDATE questions SET current_version=?,type=?,is_required=?,status=? WHERE id=?',
-      [version, input.type, Number(input.required), status, id]);
+      [version, input.type, 0, status, id]);
     return { id, status, version };
   });
   ok(res, result, 'Nova versão da pergunta salva.');

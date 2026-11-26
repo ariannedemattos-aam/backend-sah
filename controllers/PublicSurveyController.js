@@ -30,7 +30,8 @@ const returnInput = z.object({
   preferredChannel: z.string().trim().max(30).nullish(),
   message: z.string().trim().max(500).nullish(),
 });
-const completeInput = z.object({ overallRating: z.number().int().min(0).max(10).optional() });
+const lowScoreMax = 6;
+const completeInput = z.object({ overallRating: z.number().int().min(0).max(10) });
 
 async function ensure(req, conn = pool, lock = false) {
   const hash = crypto.createHash('sha256').update(req.surveyToken).digest('hex');
@@ -146,7 +147,7 @@ export async function start(req, res) {
     if (!attendance) throw new AppError('Adicione um atendimento antes de iniciar a pesquisa.', 422);
     await conn.execute(
       'INSERT INTO survey_questions (id,survey_id,attendance_id,question_id,question_version_id,prompt_snapshot,type_snapshot,required_snapshot,display_order) '
-        + 'SELECT UUID(), a.survey_id,a.id,q.id,qv.id,qv.prompt,q.type,q.is_required,qa.display_order '
+        + 'SELECT UUID(), a.survey_id,a.id,q.id,qv.id,qv.prompt,q.type,0,qa.display_order '
         + 'FROM survey_attendances a JOIN question_assignments qa ON (qa.sector_id=a.sector_id OR qa.sector_id IS NULL) '
         + "AND (qa.service_id=a.service_id OR qa.service_id IS NULL) AND qa.is_active=1 JOIN questions q ON q.id=qa.question_id AND q.status='active' "
         + 'JOIN question_versions qv ON qv.question_id=q.id AND qv.version=q.current_version WHERE a.survey_id=?',
@@ -161,7 +162,7 @@ export async function questions(req, res) {
   await ensure(req);
   const { limit, offset } = paging.parse(req.query);
   const [data] = await pool.execute(
-    "SELECT sq.id,sq.attendance_id attendanceId,sq.prompt_snapshot text,sq.type_snapshot type,sq.required_snapshot required,sq.display_order displayOrder,st.name stage,"
+    "SELECT sq.id,sq.attendance_id attendanceId,sq.prompt_snapshot text,sq.type_snapshot type,0 required,sq.display_order displayOrder,st.name stage,"
       + "(SELECT JSON_ARRAYAGG(JSON_OBJECT('value',qo.value,'label',qo.label,'order',qo.display_order)) FROM question_options qo WHERE qo.question_version_id=sq.question_version_id) options "
       + 'FROM survey_questions sq LEFT JOIN questions q ON q.id=sq.question_id LEFT JOIN stages st ON st.id=q.stage_id '
       + 'WHERE sq.survey_id=? ORDER BY sq.display_order,sq.id LIMIT ? OFFSET ?',
@@ -176,7 +177,7 @@ export async function questions(req, res) {
 export async function nextQuestion(req, res) {
   await ensure(req);
   const [[data]] = await pool.execute(
-    'SELECT sq.id,sq.attendance_id,sq.prompt_snapshot,sq.type_snapshot,sq.required_snapshot,sq.display_order FROM survey_questions sq '
+    'SELECT sq.id,sq.attendance_id,sq.prompt_snapshot,sq.type_snapshot,0 AS required_snapshot,sq.display_order FROM survey_questions sq '
       + 'LEFT JOIN answers a ON a.survey_question_id=sq.id WHERE sq.survey_id=? AND a.id IS NULL ORDER BY sq.display_order,sq.id LIMIT 1',
     [req.params.id],
   );
@@ -185,10 +186,7 @@ export async function nextQuestion(req, res) {
 
 async function normalizeAnswer(conn, question, input) {
   const { value, textValue, optionValues } = input;
-  if (value == null && !textValue && !optionValues) {
-    if (question.required_snapshot) throw new AppError('Resposta obrigatória.', 422);
-    return [null, null];
-  }
+  if (value == null && !textValue && !optionValues) return [null, null];
   if (question.type_snapshot === 'rating' && value != null && !textValue && !optionValues) return [value, null];
   if (question.type_snapshot === 'text' && textValue && value == null && !optionValues) return [null, textValue];
   const choice = question.type_snapshot === 'single_choice' && textValue && !optionValues ? [textValue]
@@ -207,7 +205,7 @@ export async function answer(req, res) {
   const input = answerInput.parse(req.body);
   await change(req, async (conn, survey) => {
     requireStatus(survey, 'in_progress');
-    const [[question]] = await conn.execute('SELECT id,type_snapshot,required_snapshot,question_version_id FROM survey_questions WHERE id=? AND survey_id=?',
+    const [[question]] = await conn.execute('SELECT id,type_snapshot,question_version_id FROM survey_questions WHERE id=? AND survey_id=?',
       [req.params.surveyQuestionId, survey.id]);
     if (!question) throw new AppError('Pergunta não encontrada.', 404);
     const [value, textValue] = await normalizeAnswer(conn, question, input);
@@ -241,22 +239,25 @@ export async function returnRequest(req, res) {
 }
 
 export async function complete(req, res) {
-  const { overallRating } = completeInput.parse(req.body);
   const { changed, recipients } = await change(req, async (conn, survey) => {
     if (survey.status === 'completed') return { changed: false, recipients: [] };
     requireStatus(survey, 'in_progress');
-    const [[required]] = await conn.execute(
-      'SELECT COUNT(*) count FROM survey_questions sq LEFT JOIN answers a ON a.survey_question_id=sq.id WHERE sq.survey_id=? AND sq.required_snapshot=1 AND a.id IS NULL',
-      [survey.id],
-    );
-    if (required.count) throw new AppError('Existem perguntas obrigatórias sem resposta.', 422);
-    await conn.execute("UPDATE surveys SET status='completed',completed_at=UTC_TIMESTAMP(),overall_rating=? WHERE id=?", [overallRating ?? null, survey.id]);
+    const { overallRating } = completeInput.parse(req.body);
+    await conn.execute("UPDATE surveys SET status='completed',completed_at=UTC_TIMESTAMP(),overall_rating=? WHERE id=?", [overallRating, survey.id]);
     const [[request]] = await conn.execute('SELECT 1 AS present FROM return_requests WHERE survey_id=?', [survey.id]);
     const recipients = request ? await notifyPermission(conn, ['return_requests.manage'], {
       type: 'return.created', title: 'Nova solicitação de retorno',
       message: 'Uma pesquisa concluída inclui pedido de retorno.', href: '/admin/retornos',
     }, { surveyId: survey.id }) : [];
-    return { changed: true, recipients };
+    if (overallRating <= lowScoreMax) {
+      const lowScoreRecipients = await notifyPermission(conn, ['surveys.read'], {
+        type: 'survey.low_score', title: 'Avaliação geral baixa',
+        message: 'Uma pesquisa concluída requer triagem da Ouvidoria.',
+        href: '/admin/avaliacoes?overallMax=' + lowScoreMax,
+      }, { surveyId: survey.id, role: 'userAdmin' });
+      recipients.push(...lowScoreRecipients);
+    }
+    return { changed: true, recipients: [...new Set(recipients)] };
   });
   if (changed) {
     emitDashboardUpdate({ surveyId: req.params.id, type: 'survey_completed' });

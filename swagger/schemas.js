@@ -76,7 +76,7 @@ export const schemas = {
     preferredChannel: nullable({ ...string, maxLength: 30 }),
     message: nullable({ ...string, maxLength: 500 }),
   }, ['contact']),
-  Completion: object({ overallRating: { type: 'integer', minimum: 0, maximum: 10 } }),
+  Completion: object({ overallRating: { type: 'integer', minimum: 0, maximum: 10 } }, ['overallRating']),
   DashboardOverview: object({
     surveys: object({ total: count, completed: nullable({ type: 'string' }) }, ['total', 'completed']),
     answers: count,

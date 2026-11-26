@@ -33,7 +33,7 @@ const refreshExample = { refreshToken: 'SUBSTITUA_PELO_REFRESH_TOKEN' };
 const user = { id: ids.user, name: 'Colaborador Fictício', email: loginExample.email, role: 'userSetor', is_active: 1 };
 const session = { user, accessToken: 'SUBSTITUA_PELO_ACCESS_TOKEN', ...refreshExample };
 const question = {
-  id: ids.question, attendanceId: ids.attendance, text: 'Como você avalia a recepção?', type: 'rating', required: 1, displayOrder: 1,
+  id: ids.question, attendanceId: ids.attendance, text: 'Como você avalia a recepção?', type: 'rating', required: 0, displayOrder: 1,
   options: [{ value: '5', label: 'Muito satisfeito' }],
 };
 const noData = { type: 'object', nullable: true, enum: [null] };
@@ -82,6 +82,7 @@ const analysisQueries = [
   ...periodQueries,
   ...[['sectorId', ids.sector, 'setor'], ['serviceId', ids.service, 'serviço'], ['stageId', ids.stage, 'etapa']].map(([name, example, label]) =>
     ({ name, in: 'query', description: 'UUID de ' + label + ' retornado nas opções de análise.', schema: uuid, example })),
+  { name: 'overallMax', in: 'query', description: 'Limite inclusivo da nota geral do hospital, de 0 a 10.', schema: { type: 'integer', minimum: 0, maximum: 10 }, example: 6 },
   { name: 'score', in: 'query', description: 'Filtra pela nota individual da resposta, de 1 a 5.', schema: { type: 'integer', minimum: 1, maximum: 5 }, example: 5 },
   { ...searchQuery, description: 'Busca por trecho do código da pesquisa, do nome do setor ou do serviço.' },
 ];
@@ -222,7 +223,7 @@ surveyOperation('/questions', 'get', 'questions', 'Listar perguntas da pesquisa'
   ] });
 
 surveyOperation('/next-question', 'get', 'questions', 'Consultar próxima pergunta sem resposta',
-  'Retorna um único item com campos em snake_case e sem a lista de opções. Quando não há perguntas pendentes, data é null.',
+  'Retorna um único item com campos em snake_case e sem a lista de opções. As perguntas são opcionais. Quando não há perguntas pendentes, data é null.',
   { 200: response('Próxima pergunta ou null.', { ...schemas.NextSurveyQuestion, nullable: true }, {
     id: question.id, attendance_id: question.attendanceId, prompt_snapshot: question.text,
     type_snapshot: question.type, required_snapshot: question.required, display_order: question.displayOrder,
@@ -230,7 +231,7 @@ surveyOperation('/next-question', 'get', 'questions', 'Consultar próxima pergun
   { operationId: 'getNextSurveyQuestion' });
 
 surveyOperation('/answers/{surveyQuestionId}', 'put', 'answers', 'Salvar resposta a uma pergunta',
-  'A pesquisa deve estar em preenchimento. Use value de 1 a 5 para nota, textValue para texto ou escolha única e optionValues para múltipla escolha. Para escolhas, envie valores existentes nas opções. Uma questão obrigatória exige resposta do tipo correspondente.',
+  'A pesquisa deve estar em preenchimento. Use value de 1 a 5 para nota, textValue para texto ou escolha única e optionValues para múltipla escolha. Para escolhas, envie valores existentes nas opções. As perguntas do questionário são opcionais.',
   { 200: response('Resposta registrada.', noData, null, 'Resposta salva.') },
   {
     operationId: 'saveSurveyAnswer',
@@ -238,12 +239,12 @@ surveyOperation('/answers/{surveyQuestionId}', 'put', 'answers', 'Salvar respost
     requestBody: body('Answer', { value: 5 }),
     errorResponses: {
       404: error('Pesquisa, credencial ou pergunta não encontrada para essa pesquisa.', 'Pergunta não encontrada.'),
-      422: error('Resposta obrigatória ausente ou incompatível com o tipo ou opções.', 'Resposta incompatível com o tipo ou com as opções da pergunta.'),
+      422: error('Resposta incompatível com o tipo ou opções.', 'Resposta incompatível com o tipo ou com as opções da pergunta.'),
     },
   });
 
-surveyOperation('/feedback', 'put', 'feedback', 'Salvar elogios e sugestões',
-  'A pesquisa deve estar em preenchimento. Todos os campos são opcionais; textos omitidos ou vazios passam a null. Cada campo aceita até 500 caracteres na configuração padrão. O front-end envia comentários livres em suggestion.',
+surveyOperation('/feedback', 'put', 'feedback', 'Salvar elogios, reclamações e sugestões',
+  'A pesquisa deve estar em preenchimento. Todos os campos são opcionais; textos omitidos ou vazios passam a null. Cada campo aceita até 500 caracteres na configuração padrão. O front-end envia reclamações em negative e sugestões ou comentários em suggestion.',
   { 200: response('Feedback salvo.', noData, null, 'Feedback salvo.'), 422: invalidData },
   { operationId: 'saveSurveyFeedback', requestBody: body('Feedback', { positive: 'A recepção fictícia foi organizada.', negative: 'A sinalização fictícia pode melhorar.', praise: 'Equipe de demonstração atenciosa.', suggestion: 'Incluir uma placa fictícia de orientação.' }) });
 
@@ -255,11 +256,11 @@ surveyOperation('/return-request', 'put', 'returns', 'Registrar pedido de retorn
   }, { operationId: 'saveReturnRequest', requestBody: body('ReturnRequest', { name: 'Pessoa Fictícia', contact: 'retorno@example.invalid', preferredChannel: 'email', message: 'Pedido de demonstração.' }) });
 
 surveyOperation('/complete', 'post', 'answers', 'Finalizar pesquisa de satisfação',
-  'Exige pesquisa em preenchimento com todas as perguntas obrigatórias respondidas. A nota geral opcional é um inteiro de 0 a 10. A primeira conclusão registra o resultado e emite dashboard:update aos assinantes autorizados. Uma repetição não substitui a nota nem emite outro evento.',
+  'Exige pesquisa em preenchimento e nota geral inteira de 0 a 10. As perguntas do atendimento e o retorno são opcionais. A primeira conclusão emite dashboard:update aos assinantes autorizados. Nota até 6 cria alerta interno de triagem para administradores autorizados, sem dados pessoais. Uma repetição não substitui a nota nem emite outro evento.',
   {
     200: response('Pesquisa finalizada.', noData, null, 'Pesquisa finalizada.'),
-    422: error('Nota geral inválida ou perguntas obrigatórias pendentes.', 'Existem perguntas obrigatórias sem resposta.'),
-  }, { operationId: 'completeSurvey', requestBody: body('Completion', { overallRating: 9 }, false) });
+    422: error('Nota geral ausente ou inválida.', 'Dados inválidos.'),
+  }, { operationId: 'completeSurvey', requestBody: body('Completion', { overallRating: 9 }) });
 
 const dashboardExample = { surveys: { total: 1, completed: '1' }, total: 1, answers: 5, averageRating: '4.60', positiveAnswers: 4, ratedAnswers: 5 };
 add('/api/v1/admin/dashboard/overview', 'get', 'dashboard', 'Consultar resumo do dashboard',
@@ -583,7 +584,7 @@ export default {
   openapi: '3.0.3',
   info: {
     title: 'API Ouvidoria FHDOD',
-    version: '1.5.0',
+    version: '1.6.0',
     description: [
       'API de pesquisa de satisfação hospitalar. Use o Swagger aberto no servidor que pretende testar.',
       'Para testar no Swagger, use o login JSON em /api/v1/auth/login. O site usa as rotas /auth/web via proxy de mesma origem com cookie próprio. Em **Authorize**, cole somente o accessToken no esquema bearerAuth. A permissão dashboard.read é exigida no dashboard. O papel de setor do seed não recebe dashboard.read nem users.manage.',

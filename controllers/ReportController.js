@@ -18,6 +18,7 @@ async function criteriaLabel(connection, filters) {
     labels.push(label + ': ' + (record?.name ?? 'sem correspondência'));
   }
   if (filters.score !== undefined) labels.push('Nota da resposta: ' + filters.score);
+  if (filters.overallMax !== undefined) labels.push('Nota geral até ' + filters.overallMax + '/10');
   // Search can contain personal text typed by an operator. Record its use, not its value.
   if (filters.search) labels.push('Busca aplicada');
   return labels.join(' / ') || 'Sem filtros adicionais';

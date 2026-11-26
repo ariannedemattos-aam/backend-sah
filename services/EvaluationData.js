@@ -15,6 +15,7 @@ const reportFilters = z.object({
   serviceId: identifier.optional(),
   stageId: identifier.optional(),
   score: z.coerce.number().int().min(1).max(5).optional(),
+  overallMax: z.coerce.number().int().min(0).max(10).optional(),
   search: z.string().trim().max(120).default(''),
 });
 const pagination = {
@@ -84,6 +85,10 @@ export function selections(filters, user, { exclusive = false } = {}) {
   const rating = ratingFilter(filters);
   const conditions = ["s.status='completed'"], params = [];
   periodConditions(filters, 's.completed_at', conditions, params);
+  if (filters.overallMax !== undefined) {
+    conditions.push('s.overall_rating<=?');
+    params.push(filters.overallMax);
+  }
   if (attendance.conditions.length || rating.conditions.length) {
     conditions.push('EXISTS (SELECT 1 FROM survey_attendances a '
       + (rating.conditions.length ? answerJoin : '')

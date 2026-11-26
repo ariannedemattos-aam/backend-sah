@@ -11,15 +11,16 @@ export async function notifyUsers(connection, recipients, event) {
   return users;
 }
 
-export async function notifyPermission(connection, permissions, event, { surveyId } = {}) {
+export async function notifyPermission(connection, permissions, event, { surveyId, role } = {}) {
   const choices = permissions.map(() => '?').join(',');
   const surveyScope = surveyId ? " AND (r.name<>'userSetor' OR NOT EXISTS (SELECT 1 FROM survey_attendances a WHERE a.survey_id=? "
     + 'AND NOT EXISTS (SELECT 1 FROM user_sectors us WHERE us.sector_id=a.sector_id AND us.user_id=u.id)))' : '';
+  const roleScope = role ? ' AND r.name=?' : '';
   const [recipients] = await connection.execute(
     'SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE u.is_active=1 AND u.deleted_at IS NULL AND '
       + '(EXISTS (SELECT 1 FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=u.role_id AND p.name IN (' + choices + '))'
-      + ' OR EXISTS (SELECT 1 FROM user_permissions up JOIN permissions p ON p.id=up.permission_id WHERE up.user_id=u.id AND p.name IN (' + choices + ')))' + surveyScope,
-    [...permissions, ...permissions, ...(surveyId ? [surveyId] : [])],
+      + ' OR EXISTS (SELECT 1 FROM user_permissions up JOIN permissions p ON p.id=up.permission_id WHERE up.user_id=u.id AND p.name IN (' + choices + ')))' + surveyScope + roleScope,
+    [...permissions, ...permissions, ...(surveyId ? [surveyId] : []), ...(role ? [role] : [])],
   );
   return notifyUsers(connection, recipients.map(user => user.id), event);
 }
