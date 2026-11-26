@@ -1,0 +1,11 @@
+import fs from 'node:fs/promises';
+import mysql from 'mysql2/promise';
+import { env } from '../config/env.js';
+const admin = await mysql.createConnection({ host: env.db.host, port: env.db.port, user: env.db.user, password: env.db.password });
+await admin.query(`CREATE DATABASE IF NOT EXISTS \`${env.db.database.replace(/`/g, '')}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+await admin.end();
+const pool = mysql.createPool({ ...env.db, charset: 'utf8mb4', waitForConnections: true, connectionLimit: 10 });
+const sql = await fs.readFile(new URL('../database/schema.sql', import.meta.url), 'utf8');
+for (const statement of sql.split(/;\s*\n/).map((value) => value.trim()).filter(Boolean)) await pool.query(statement);
+console.log('Banco e schema aplicados.');
+await pool.end();

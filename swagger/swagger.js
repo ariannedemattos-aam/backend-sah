@@ -1,0 +1,2 @@
+import swaggerJSDoc from 'swagger-jsdoc';
+export default swaggerJSDoc({ definition:{openapi:'3.0.3',info:{title:'API Ouvidoria FHDOD',version:'1.0.0',description:'API de pesquisa de satisfação hospitalar.'},servers:[{url:'/api/v1'}],components:{securitySchemes:{bearerAuth:{type:'http',scheme:'bearer',bearerFormat:'JWT'},surveyToken:{type:'apiKey',in:'header',name:'X-Survey-Token'}}}},apis:['./routes/*.js'] });

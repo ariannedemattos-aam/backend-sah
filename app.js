@@ -1,11 +1,20 @@
-const express = require('express');
+import express from 'express';
+import helmet from 'helmet';
+import cors from 'cors';
+import rateLimit from 'express-rate-limit';
+import { env } from './config/env.js';
+import routes from './routes/index.js';
+import { errorHandler, notFound } from './middlewares/errorMiddleware.js';
+import swaggerUi from 'swagger-ui-express';
+import swaggerSpec from './swagger/swagger.js';
 const app = express();
-const port = 3000;
-
-app.use(express.json());
-
-
-// Inicialização do servidor
-app.listen(port, () => {
-  console.log(`Servidor rodando em http://localhost:${port}`);
-});
+app.disable('x-powered-by');
+app.use(helmet());
+app.use(cors({ origin: env.corsOrigins, credentials: true }));
+app.use(express.json({ limit: '100kb' }));
+app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, limit: 500, standardHeaders: true, legacyHeaders: false }));
+app.get('/health', (_req, res) => res.json({ success: true, message: 'API operacional', data: { status: 'ok' } }));
+app.use('/api/v1', routes);
+if (env.swaggerEnabled) { app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec)); app.get('/api-docs.json', (_req, res) => res.json(swaggerSpec)); }
+app.use(notFound); app.use(errorHandler);
+export default app;

@@ -1,0 +1,2 @@
+import { Router } from 'express'; import * as c from '../controllers/AuthController.js'; import { authenticate } from '../middlewares/authMiddleware.js'; import { validate } from '../middlewares/validationMiddleware.js'; import { loginSchema, refreshSchema } from '../validators/authValidator.js';
+const router = Router(); router.post('/login', validate(loginSchema), c.login); router.post('/refresh', validate(refreshSchema), c.refresh); router.post('/logout', validate(refreshSchema), c.logout); router.get('/me', authenticate, c.me); export default router;

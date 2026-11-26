@@ -1,0 +1,4 @@
+import pool from '../config/database.js'; import { env } from '../config/env.js'; import { ok } from '../utils/response.js'; import { AppError } from '../utils/errors.js';
+const guard=(req)=>{if(env.tvwallToken&&req.headers['x-tvwall-token']!==env.tvwallToken)throw new AppError('Token TV Wall inválido.',401);};
+export const overview=async(req,res)=>{guard(req);const [data]=await pool.query('SELECT COUNT(*) responses,ROUND(AVG(rating_value),1) averageRating FROM answers WHERE rating_value IS NOT NULL');ok(res,data[0]);};
+export const sectors=async(req,res)=>{guard(req);const [data]=await pool.query('SELECT s.name,COUNT(a.id) responses,ROUND(AVG(a.rating_value),1) averageRating FROM answers a JOIN survey_questions sq ON sq.id=a.survey_question_id JOIN survey_attendances sa ON sa.id=sq.attendance_id JOIN sectors s ON s.id=sa.sector_id GROUP BY s.id,s.name HAVING responses>=?',[env.tvwallMinResponses]);ok(res,data);};

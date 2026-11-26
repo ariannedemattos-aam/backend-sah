@@ -1,0 +1,3 @@
+import { ZodError } from 'zod';
+export const notFound = (_req, res) => res.status(404).json({ success: false, message: 'Recurso não encontrado.' });
+export const errorHandler = (error, _req, res, _next) => { if (error instanceof ZodError) return res.status(422).json({ success: false, message: 'Dados inválidos.', errors: error.issues.map((e) => ({ field: e.path.join('.'), message: e.message })) }); const status = error.status || 500; if (status >= 500) console.error(error); return res.status(status).json({ success: false, message: status === 500 ? 'Não foi possível realizar a operação.' : error.message, ...(error.errors && { errors: error.errors }) }); };
