@@ -1,0 +1,8 @@
+flowchart LR
+ C["Verificar diff, autoria e testes"] --> G["Push fast-forward ao fork"]
+ G --> R["Render com commit explícito"]
+ G --> V["Vercel preparada sem trocar domínio"]
+ R --> A["Validar contrato público"]
+ V --> A
+ A --> P["Promover Vercel e testar"]
+ P --> E["Registrar IDs e recuperação"]

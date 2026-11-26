@@ -1,0 +1,367 @@
+erDiagram
+    answers {
+        char id PK
+        char survey_question_id FK
+        decimal rating_value
+        text text_value
+        timestamp created_at
+        timestamp updated_at
+    }
+    survey_questions ||--o| answers : answers_ibfk_1
+    attendance_counts {
+        char id PK
+        char sector_id
+        char service_id
+        date count_date
+        int total
+    }
+    attendance_journey_stages {
+        char attendance_id PK,FK
+        char stage_id PK,FK
+    }
+    attendance_journeys ||--o{ attendance_journey_stages : attendance_journey_stages_ibfk_1
+    stages ||--o{ attendance_journey_stages : attendance_journey_stages_ibfk_2
+    attendance_journeys {
+        char attendance_id PK,FK
+    }
+    survey_attendances ||--o| attendance_journeys : attendance_journeys_ibfk_1
+    audit_logs {
+        char id PK
+        char user_id FK
+        varchar action
+        varchar entity
+        char entity_id
+        json metadata
+        timestamp created_at
+    }
+    users o|--o{ audit_logs : audit_logs_ibfk_1
+    auth_sessions {
+        char id PK
+        char user_id FK
+        char refresh_hash
+        char previous_refresh_hash
+        datetime rotated_at
+        datetime expires_at
+        datetime revoked_at
+        timestamp created_at
+    }
+    users ||--o{ auth_sessions : auth_sessions_ibfk_1
+    feedback {
+        char id PK
+        char survey_id FK
+        text positive_text
+        text negative_text
+        text praise_text
+        text suggestion_text
+        timestamp created_at
+    }
+    surveys ||--o| feedback : feedback_ibfk_1
+    invitations {
+        char id PK
+        char token_hash
+        enum channel
+        varchar contact
+        datetime expires_at
+        datetime used_at
+        timestamp created_at
+    }
+    notification_logs {
+        char id PK
+        char invitation_id FK
+        varchar channel
+        varchar status
+        timestamp created_at
+    }
+    invitations o|--o{ notification_logs : notification_logs_ibfk_1
+    ombudsman_actions {
+        char id PK
+        char case_id FK
+        char actor_id FK
+        enum previous_status
+        enum status
+        enum priority
+        varchar note
+        timestamp created_at
+    }
+    ombudsman_cases ||--o{ ombudsman_actions : ombudsman_actions_ibfk_1
+    users ||--o{ ombudsman_actions : ombudsman_actions_ibfk_2
+    ombudsman_cases {
+        char id PK
+        char survey_id FK
+        enum status
+        enum priority
+        datetime created_at
+    }
+    surveys ||--o| ombudsman_cases : ombudsman_cases_ibfk_1
+    permissions {
+        char id PK
+        varchar name
+        varchar description
+        timestamp created_at
+    }
+    question_approvals {
+        char id PK
+        char question_id FK
+        char reviewer_id FK
+        enum action
+        text justification
+        timestamp created_at
+    }
+    questions ||--o{ question_approvals : question_approvals_ibfk_1
+    users ||--o{ question_approvals : question_approvals_ibfk_2
+    question_assignments {
+        char id PK
+        char question_id FK
+        char sector_id FK
+        char service_id FK
+        char stage_id FK
+        int display_order
+        tinyint is_active
+    }
+    questions ||--o{ question_assignments : question_assignments_ibfk_1
+    sectors o|--o{ question_assignments : question_assignments_ibfk_2
+    services o|--o{ question_assignments : question_assignments_ibfk_3
+    stages o|--o{ question_assignments : question_assignments_ibfk_4
+    question_options {
+        char id PK
+        char question_version_id FK
+        varchar label
+        varchar value
+        int display_order
+    }
+    question_versions ||--o{ question_options : question_options_ibfk_1
+    question_version_rules {
+        char version_id PK,FK
+        char prerequisite_id FK
+        varchar expected_value
+    }
+    question_versions ||--o| question_version_rules : question_version_rules_ibfk_1
+    questions ||--o{ question_version_rules : question_version_rules_ibfk_2
+    question_versions {
+        char id PK
+        char question_id FK
+        int version
+        text prompt
+        text change_reason
+        char created_by FK
+        timestamp created_at
+    }
+    questions ||--o{ question_versions : question_versions_ibfk_1
+    users o|--o{ question_versions : question_versions_ibfk_2
+    questions {
+        char id PK
+        char created_by FK
+        char stage_id FK
+        char team_id FK
+        enum type
+        enum status
+        int current_version
+        tinyint is_required
+        timestamp created_at
+        timestamp updated_at
+    }
+    users o|--o{ questions : questions_ibfk_1
+    stages o|--o{ questions : questions_ibfk_2
+    teams o|--o{ questions : questions_ibfk_3
+    refresh_tokens {
+        char id PK
+        char user_id FK
+        char token_hash
+        datetime expires_at
+        datetime revoked_at
+        timestamp created_at
+    }
+    users ||--o{ refresh_tokens : refresh_tokens_ibfk_1
+    return_requests {
+        char id PK
+        char survey_id FK
+        varchar name
+        varchar contact
+        varchar preferred_channel
+        text message
+        enum status
+        timestamp created_at
+    }
+    surveys ||--o| return_requests : return_requests_ibfk_1
+    role_permissions {
+        char role_id PK,FK
+        char permission_id PK,FK
+    }
+    roles ||--o{ role_permissions : role_permissions_ibfk_1
+    permissions ||--o{ role_permissions : role_permissions_ibfk_2
+    roles {
+        char id PK
+        varchar name
+        timestamp created_at
+    }
+    roster_shift_staff {
+        char sector_id PK,FK
+        date work_date PK,FK
+        char shift_id PK,FK
+        char staff_id PK,FK
+        tinyint is_assigned
+    }
+    roster_shifts ||--o{ roster_shift_staff : roster_shift_staff_ibfk_1
+    roster_staff ||--o{ roster_shift_staff : roster_shift_staff_ibfk_2
+    roster_shifts {
+        char sector_id PK,FK
+        date work_date PK
+        char shift_id PK,FK
+        char team_id FK
+        char updated_by FK
+        timestamp updated_at
+    }
+    sectors ||--o{ roster_shifts : roster_shifts_ibfk_1
+    shifts ||--o{ roster_shifts : roster_shifts_ibfk_2
+    teams ||--o{ roster_shifts : roster_shifts_ibfk_3
+    users ||--o{ roster_shifts : roster_shifts_ibfk_4
+    roster_staff {
+        char id PK
+        char sector_id FK
+        varchar name
+        tinyint is_active
+    }
+    sectors ||--o{ roster_staff : roster_staff_ibfk_1
+    sectors {
+        char id PK
+        varchar name
+        varchar slug
+        text description
+        tinyint is_active
+        timestamp created_at
+        timestamp updated_at
+    }
+    service_stages {
+        char id PK
+        char service_id FK
+        char stage_id FK
+        char team_id FK
+        int display_order
+        tinyint is_required
+        tinyint is_active
+    }
+    services ||--o{ service_stages : service_stages_ibfk_1
+    stages ||--o{ service_stages : service_stages_ibfk_2
+    teams o|--o{ service_stages : service_stages_ibfk_3
+    services {
+        char id PK
+        char sector_id FK
+        varchar name
+        varchar slug
+        text description
+        tinyint is_active
+        timestamp created_at
+        timestamp updated_at
+    }
+    sectors o|--o{ services : services_ibfk_1
+    shifts {
+        char id PK
+        varchar name
+        int display_order
+        text description
+        tinyint is_active
+        timestamp created_at
+    }
+    stages {
+        char id PK
+        varchar name
+        text description
+        tinyint is_active
+        timestamp created_at
+    }
+    survey_attendances {
+        char id PK
+        char survey_id FK
+        char sector_id FK
+        char service_id FK
+        char shift_id FK
+        date attendance_date
+        timestamp created_at
+    }
+    surveys ||--o{ survey_attendances : survey_attendances_ibfk_1
+    sectors ||--o{ survey_attendances : survey_attendances_ibfk_2
+    services ||--o{ survey_attendances : survey_attendances_ibfk_3
+    shifts ||--o{ survey_attendances : survey_attendances_ibfk_4
+    survey_question_context {
+        char question_id PK,FK
+        char stage_id FK
+        varchar stage_name
+        char prerequisite_id FK
+        varchar expected_value
+        tinyint visible
+    }
+    survey_questions ||--o| survey_question_context : survey_question_context_ibfk_1
+    survey_questions o|--o{ survey_question_context : survey_question_context_ibfk_2
+    stages o|--o{ survey_question_context : survey_question_context_ibfk_3
+    survey_questions {
+        char id PK
+        char survey_id FK
+        char attendance_id FK
+        char question_id FK
+        char question_version_id FK
+        text prompt_snapshot
+        varchar type_snapshot
+        tinyint required_snapshot
+        int display_order
+        timestamp created_at
+    }
+    survey_attendances o|--o{ survey_questions : snapshot_attendance_survey_fk
+    questions o|--o{ survey_questions : snapshot_question_fk
+    question_versions o|--o{ survey_questions : snapshot_version_question_fk
+    surveys ||--o{ survey_questions : survey_questions_ibfk_1
+    survey_attendances o|--o{ survey_questions : survey_questions_ibfk_2
+    surveys {
+        char id PK
+        char access_token_hash
+        enum status
+        datetime started_at
+        datetime completed_at
+        timestamp created_at
+        tinyint overall_rating
+    }
+    teams {
+        char id PK
+        char sector_id FK
+        char service_id FK
+        varchar name
+        text description
+        tinyint is_active
+        timestamp created_at
+    }
+    sectors o|--o{ teams : teams_ibfk_1
+    services o|--o{ teams : teams_ibfk_2
+    user_notifications {
+        char id PK
+        char user_id FK
+        varchar event_type
+        varchar title
+        varchar message
+        varchar href
+        timestamp created_at
+        datetime read_at
+    }
+    users ||--o{ user_notifications : user_notifications_ibfk_1
+    user_permissions {
+        char user_id PK,FK
+        char permission_id PK,FK
+    }
+    users ||--o{ user_permissions : user_permissions_ibfk_1
+    permissions ||--o{ user_permissions : user_permissions_ibfk_2
+    user_sectors {
+        char user_id PK,FK
+        char sector_id PK,FK
+    }
+    users ||--o{ user_sectors : user_sectors_ibfk_1
+    sectors ||--o{ user_sectors : user_sectors_ibfk_2
+    users {
+        char id PK
+        char role_id FK
+        varchar name
+        varchar email
+        varchar password_hash
+        tinyint is_active
+        datetime deleted_at
+        timestamp created_at
+        timestamp updated_at
+    }
+    roles ||--o{ users : users_ibfk_1

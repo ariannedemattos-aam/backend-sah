@@ -1,0 +1,12 @@
+sequenceDiagram
+ participant A as API
+ participant S as Socket.IO
+ participant W as Dashboard
+ participant D as MySQL
+ A->>D: Conclui pesquisa ou atualiza escala
+ A->>S: dashboard:update com tipo
+ S-->>W: Sinal privado
+ W->>A: Consulta filtrada REST
+ A->>D: CTE e agregados
+ A-->>W: Indicadores sem contato
+ Note over W,A: A TV usa REST agregada, com limiar mínimo

@@ -1,0 +1,10 @@
+flowchart LR
+ S["server.js"] --> A["app.js"]
+ A --> R["Rotas e middlewares"]
+ A --> O["OpenAPI e Swagger"]
+ R --> C["Controllers"]
+ C --> B["Serviços de domínio"]
+ C --> T["Pool e transações"]
+ B --> T
+ T --> M["MySQL / Aiven"]
+ B --> K["Socket.IO e relatórios"]

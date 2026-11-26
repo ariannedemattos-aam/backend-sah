@@ -1,0 +1,21 @@
+erDiagram
+    SETOR ||--o{ SERVICO : oferece
+    SERVICO ||--o{ ETAPAS_SERVICO : configura
+    ETAPA ||--o{ ETAPAS_SERVICO : participa
+    PAPEL ||--o{ USUARIO : classifica
+    USUARIO ||--o{ ESCOPO_SETOR : recebe
+    SETOR ||--o{ ESCOPO_SETOR : restringe
+    PERGUNTA ||--o{ VERSAO : possui
+    VERSAO ||--o{ OPCAO : oferece
+    VERSAO ||--o| CONDICAO : pode_exigir
+    PESQUISA ||--o{ ATENDIMENTO : descreve
+    ATENDIMENTO ||--o{ SNAPSHOT : materializa
+    SNAPSHOT ||--o| RESPOSTA : recebe
+    PESQUISA ||--o| RETORNO : permite
+    PESQUISA ||--o| FEEDBACK : recebe
+    PESQUISA ||--o| MANIFESTACAO : encaminha
+    MANIFESTACAO ||--o{ PROVIDENCIA : gera
+    SETOR ||--o{ ESCALA : organiza
+    EQUIPE ||--o{ ESCALA : ocupa
+    ESCALA ||--o{ ALOCACAO : associa
+    PROFISSIONAL ||--o{ ALOCACAO : participa

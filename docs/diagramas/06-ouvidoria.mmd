@@ -1,0 +1,8 @@
+flowchart LR
+ A["Fila pendente"] --> B["Em atendimento"]
+ B --> C{"Retorno solicitado e aberto?"}
+ C -->|sim| D["Encaminhar e concluir retorno"]
+ C -->|não| E["Concluir caso"]
+ D --> E
+ E -->|reabrir| B
+ B --> F["Histórico com autor, situação e prioridade"]

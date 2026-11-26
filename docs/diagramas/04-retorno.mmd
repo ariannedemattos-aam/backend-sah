@@ -1,0 +1,7 @@
+flowchart TD
+ A{"Paciente deseja retorno?"} -->|não| B["Concluir sem contato"]
+ A -->|sim| C["Informar contato voluntário"]
+ C --> D["Pedido pendente registrado"]
+ D --> E["Operador autorizado consulta contato sob auditoria"]
+ E --> F["Em atendimento"]
+ F --> G["Concluído"]

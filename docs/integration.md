@@ -1,62 +1,21 @@
-# Integração da API Ouvidoria FHDOD
+# Integração da API FHOOD
 
-- Swagger da demonstração no Render: [API FHDOD](https://fhdod-ouvidoria-demo.onrender.com/api-docs/) e [OpenAPI em JSON](https://fhdod-ouvidoria-demo.onrender.com/api-docs.json).
-- Ambiente local: inicie o back-end com `npm start` e abra [Swagger local](http://localhost:3000/api-docs/). Se a porta for diferente, abra o Swagger nessa porta e selecione **Servidor que hospeda este Swagger**.
-- Use o Swagger do próprio ambiente para executar chamadas no mesmo domínio. A API publicada permite o CORS do front-end da demonstração. Os arquivos do Swagger são servidos quando `SWAGGER_ENABLED` está habilitado.
-- O inventário cobre 67 operações de negócio e saúde. Os arquivos e ativos do Swagger, o preflight automático CORS e o transporte Socket.IO são infraestrutura.
+[Swagger interativo publicado](https://fhdod-ouvidoria-demo.onrender.com/api-docs/) · [OpenAPI JSON](https://fhdod-ouvidoria-demo.onrender.com/api-docs.json) · [Swagger local](http://localhost:3000/api-docs/)
 
-## Testes no Swagger
+O OpenAPI documenta **100 operações de negócio e saúde**. A suíte compara métodos e caminhos normalizados com a árvore Express montada. Swagger UI, preflight CORS e transporte Socket.IO são infraestrutura. As URLs de teste são selecionáveis na interface.
 
-### Administrador e setor
+## Uso por professores
 
-1. Em **Autenticação e autorização**, execute `POST /api/v1/auth/login` com os dados fictícios da sua conta de demonstração. Obtenha as credenciais com o responsável.
-2. Clique em **Authorize** e cole somente `data.accessToken` em `bearerAuth`. Execute `GET /api/v1/auth/me` para conferir papel e permissões.
-3. A conta administrativa do seed tem `dashboard.read` e pode executar `GET /api/v1/admin/dashboard/overview`. A conta de setor do seed recebe `questions.read` e `questions.propose`. Para ela, o resumo administrativo retorna 403.
-4. Para renovar, envie `data.refreshToken` no corpo de `POST /api/v1/auth/refresh` e substitua o access token no **Authorize**. Para encerrar, envie o refresh token atual a `POST /api/v1/auth/logout` e limpe o **Authorize**.
+1. Para teste sem conta, execute `GET /health`, `GET /api/v1/public/sectors`, `GET /api/v1/public/shifts` ou as rotas do TV Wall.
+2. Solicite à equipe acesso fictício com o papel adequado para a avaliação. Execute `POST /api/v1/auth/login` sem capturar a senha ou a resposta completa.
+3. Cole somente `data.accessToken` em **Authorize → bearerAuth**. `GET /api/v1/auth/me` confere papel e permissões. Limpe a autorização ao encerrar. Para revogar a sessão, envie o refresh vigente à rota `POST /api/v1/auth/logout`.
+4. O fluxo público usa `POST /api/v1/public/surveys` e um token próprio no cabeçalho `X-Survey-Token`. Cadastre atendimento com IDs do catálogo, selecione `stageIds` e inicie. Responda perguntas opcionais se desejar. Conclua com `{"overallRating":8}`. Use apenas dados fictícios.
+5. Para examinar a Ouvidoria, use um perfil autorizado e dados fictícios. Contatos são consultados sob demanda e auditados. Os exemplos do contrato são ilustrativos.
 
-### Pesquisa pública
+## Integrações e eventos
 
-1. Liste setores, serviços e turnos no catálogo público. Use IDs da resposta da API. Os UUIDs da documentação são fictícios.
-2. Execute `POST /api/v1/public/surveys` e guarde `data.id`. Em **Authorize**, cole `data.surveyToken` no esquema `surveyToken`.
-3. Adicione um atendimento em `POST /api/v1/public/surveys/{id}/attendances` com os três IDs. Execute `POST /api/v1/public/surveys/{id}/start`.
-4. Consulte `GET /api/v1/public/surveys/{id}/questions` e envie uma resposta para cada pergunta obrigatória em `PUT /api/v1/public/surveys/{id}/answers/{surveyQuestionId}`. Para a nota de demonstração, use `{"value":5}`.
-5. Se necessário, teste feedback e pedido de retorno com dados fictícios, como `retorno@example.invalid`. A API apenas registra o pedido de retorno.
-6. Finalize em `POST /api/v1/public/surveys/{id}/complete`, por exemplo com `{"overallRating":9}`. Consulte o estado da pesquisa para confirmar `completed`.
-
-## Mapeamento do front-end
-
-Os caminhos abaixo são relativos a `/api/v1`. O OpenAPI cobre as chamadas utilizadas na interface, incluindo estas integrações acrescentadas na revisão final.
-
-| Fluxo | Operações HTTP |
-| --- | --- |
-| Sessão | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` (disponível no cliente) |
-| Catálogo público | `GET /public/sectors`, `GET /public/sectors/{id}/services`, `GET /public/shifts` |
-| Pesquisa | `POST /public/surveys`, `POST /public/surveys/{id}/attendances`, `POST /public/surveys/{id}/start` |
-| Questionário e envio | `GET /public/surveys/{id}/questions`, `PUT /public/surveys/{id}/answers/{surveyQuestionId}`, `PUT /public/surveys/{id}/feedback`, `PUT /public/surveys/{id}/return-request`, `POST /public/surveys/{id}/complete` |
-| Dashboard | `GET /admin/dashboard/overview` e os cinco GETs de dimensão em `/admin/dashboard/` |
-| Cadastros | Listagens das oito coleções em `/admin`; criação, edição e alteração de status para setores, serviços, etapas, equipes e turnos |
-| Propostas e revisão | `GET /questions`, `GET /questions/services`, `POST /questions`, `GET /questions/{id}`, `PUT /questions/{id}`, `PATCH /questions/{id}/status`, `POST /questions/{id}/approve`, `POST /questions/{id}/reject` |
-| Painel público | `GET /tvwall/overview`, `GET /tvwall/sectors` |
-
-## Eventos Socket.IO
-
-- Servidores: `https://fhdod-ouvidoria-demo.onrender.com` e `http://localhost:3000`. Caminho padrão do Socket.IO: `/socket.io/`. O front-end configura o endereço em `VITE_SOCKET_URL`.
-- Autenticação: envie o JWT de acesso no campo `auth.token` do handshake Socket.IO. O servidor verifica validade, origem permitida e permissão `dashboard.read`. A sessão é desconectada ao expirar. A TV consulta apenas as rotas REST públicas de agregados.
-- Evento de aplicação `dashboard:update`, do servidor para o cliente. É emitido ao concluir a pesquisa pela primeira vez enquanto ela permanecer concluída. O front-end invalida a consulta do dashboard e busca os indicadores via REST.
-- Formato: `surveyId` é o UUID da pesquisa; `type` é a string literal `survey_completed`. Não há eventos de aplicação enviados pelo cliente. Eventos como `connect` pertencem à biblioteca.
-
-```json
-{
-  "surveyId": "671ec25c-4015-4bce-a706-000000000006",
-  "type": "survey_completed"
-}
-```
-
-## Regras e funcionalidades pendentes
-
-- A administração lista oito catálogos com busca por nome e paginação. Usuários, papéis e permissões ficam disponíveis para consulta. Os cinco catálogos editáveis devolvem o UUID real e aceitam arquivamento e reativação. O status inativo preserva os vínculos do histórico. O setor de um serviço vinculado a atendimentos, equipes ou perguntas não pode ser trocado.
-- Perguntas de setor são limitadas aos serviços dos setores atribuídos. O setor edita suas próprias propostas pendentes ou rejeitadas. A edição de uma rejeitada a devolve à revisão. A administração pode editar uma pergunta ativa e publicar sua nova versão. A versão anterior continua nos questionários iniciados. Para recuperar uma pergunta arquivada, reabra a revisão e aprove novamente.
-- Aprovação e rejeição exigem permissões distintas e gravam a justificativa. Somente perguntas ativas entram em novos questionários, conforme os serviços e setores associados.
-- Perguntas aceitam nota de 1 a 5, texto livre ou valores das opções cadastradas. Múltipla escolha usa `optionValues`. Após conclusão, as edições ficam bloqueadas e a conclusão é idempotente.
-- O resumo do dashboard é global e usa notas individuais de 1 a 5. A nota geral de encerramento usa outra escala. O painel público usa somente pesquisas concluídas e aplica o mínimo de respostas configurado.
-- Exportações, convites, envio de notificações e telas administrativas de avaliações, feedback e retornos seguem sem integração. O registro público de pedidos de retorno funciona via API. O front-end não usa `POST /auth/refresh`; o logout revoga o refresh token e o JWT de acesso vence no prazo original.
+- A aplicação web usa `/auth/web/login`, `refresh` e `logout` via proxy de mesma origem. O fluxo JSON acima serve a clientes de API.
+- `/admin/dashboard/options` carrega catálogos sem informações pessoais. Indicadores filtram período, setor, turno, serviço e equipe da escala. O resumo considera conclusão UTC; a dimensão da escala, data informada de atendimento.
+- Excel e PDF chegam por `/admin/reports/excel` e `/admin/reports/pdf`. A rota pública da TV recebe somente agregados.
+- Socket.IO recebe JWT em `auth.token`. No namespace padrão, `dashboard:update` envia apenas `{ "type": "survey_completed" }` ou `{ "type": "roster_saved" }`. Em `/notifications`, `notifications:update` sinaliza exclusivamente ao destinatário que recarregue sua lista.
+- O status HTTP 401 indica credencial ausente, inválida ou vencida. O 403 indica privilégio insuficiente. O 422 indica dados inválidos. O 409 informa conflitos de estado ou duplicidades documentadas. Um UUID fora do escopo pode retornar 404.

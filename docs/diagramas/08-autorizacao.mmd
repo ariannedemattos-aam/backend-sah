@@ -1,0 +1,8 @@
+flowchart TD
+ A["Requisição protegida"] --> B{"JWT e sessão vigentes?"}
+ B -->|não| C["401"]
+ B -->|sim| D{"Permissão atual?"}
+ D -->|não| E["403"]
+ D -->|sim| F{"Escopo do setor permite?"}
+ F -->|não| G["403 ou 404 conforme operação"]
+ F -->|sim| H["Executar e auditar quando aplicável"]

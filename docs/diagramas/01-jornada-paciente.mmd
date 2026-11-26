@@ -1,0 +1,12 @@
+flowchart TD
+ A["Página pública, QR do setor ou convite"] --> B["Setor, serviço e turno"]
+ B --> C["Etapas realizadas e data opcional"]
+ C --> D["Adicionar outro atendimento ou iniciar"]
+ D --> E["Perguntas opcionais e condicionais"]
+ E --> F["Elogio, reclamação e sugestão"]
+ F --> G["Retorno voluntário"]
+ G --> H["Nota geral obrigatória de 0 a 10"]
+ H --> I["Confirmação"]
+ B -.-> J["Sair após confirmação"]
+ E -.-> J
+ G -.-> J

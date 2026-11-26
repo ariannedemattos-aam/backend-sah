@@ -1,0 +1,7 @@
+flowchart LR
+ B["Browser React"] -->|HTTPS JSON, Bearer| E["Express"]
+ B -->|HTTPS cookie próprio| P["Proxy de sessão"]
+ P --> E
+ B <-->|WSS privado| S["Socket.IO"]
+ E -->|mysql2, TLS| M["MySQL"]
+ E -->|simulação ou adaptador configurado| C["Comunicação"]

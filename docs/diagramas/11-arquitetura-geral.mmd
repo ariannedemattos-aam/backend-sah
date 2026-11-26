@@ -1,0 +1,9 @@
+flowchart TB
+ P["Paciente e TV"] --> W["Interface pública"]
+ G["Colaboradores"] --> U["Interface interna"]
+ W --> A["API"]
+ U --> A
+ A --> D["MySQL de demonstração"]
+ A --> S["Swagger e Socket.IO"]
+ U --> E["Excel e PDF"]
+ A --> E

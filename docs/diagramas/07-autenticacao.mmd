@@ -1,0 +1,14 @@
+sequenceDiagram
+ participant N as Navegador
+ participant V as Proxy Vercel
+ participant A as API
+ participant D as MySQL
+ N->>V: POST auth/web/login
+ V->>A: Encaminha à API
+ A->>D: Verifica hash e cria sessão
+ A-->>N: Access em memória e refresh HttpOnly
+ N->>V: Refresh com cookie
+ V->>A: Encaminha
+ A->>D: Roda refresh em transação
+ A-->>N: Access e cookie atualizados
+ N->>A: JWT nas rotas internas

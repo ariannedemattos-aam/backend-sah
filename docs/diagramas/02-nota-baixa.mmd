@@ -1,0 +1,7 @@
+flowchart LR
+ A["Conclusão da pesquisa"] --> B{"Nota 0 a 6, reclamação ou retorno?"}
+ B -->|sim| C["Criar caso uma vez na transação"]
+ C --> D["Notificar Ouvidoria autorizada"]
+ C --> E["Prioridade alta em nota baixa ou retorno"]
+ B -->|não| F["Atualizar agregados"]
+ C --> F
