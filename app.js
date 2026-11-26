@@ -9,6 +9,7 @@ import swaggerUi from 'swagger-ui-express';
 import swaggerSpec from './swagger/swagger.js';
 const app = express();
 app.disable('x-powered-by');
+if (process.env.RENDER === 'true') app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors({ origin: env.corsOrigins, credentials: true }));
 app.use(express.json({ limit: '100kb' }));

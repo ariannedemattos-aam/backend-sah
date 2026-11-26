@@ -18,4 +18,22 @@ export const nextQuestion = async (req,res) => { await ensure(req.params.id,req.
 export const answer = async (req,res) => { await ensure(req.params.id,req.surveyToken); const [questions]=await pool.execute('SELECT id,type_snapshot,required_snapshot FROM survey_questions WHERE id=? AND survey_id=?',[req.params.surveyQuestionId,req.params.id]); if(!questions[0]) throw new AppError('Pergunta não encontrada.',404); const {value,textValue}=req.body; if(questions[0].required_snapshot && (value===undefined||value===null) && !textValue) throw new AppError('Resposta obrigatória.',422); await pool.execute('INSERT INTO answers (id,survey_question_id,rating_value,text_value) VALUES (UUID(),?,?,?) ON DUPLICATE KEY UPDATE rating_value=VALUES(rating_value),text_value=VALUES(text_value),updated_at=UTC_TIMESTAMP()',[req.params.surveyQuestionId,value??null,textValue??null]); ok(res,null,'Resposta salva.'); };
 export const feedback = async (req,res) => { await ensure(req.params.id,req.surveyToken); const {positive,negative,praise,suggestion}=req.body; await pool.execute('INSERT INTO feedback (id,survey_id,positive_text,negative_text,praise_text,suggestion_text) VALUES (UUID(),?,?,?,?,?) ON DUPLICATE KEY UPDATE positive_text=VALUES(positive_text),negative_text=VALUES(negative_text),praise_text=VALUES(praise_text),suggestion_text=VALUES(suggestion_text)',[req.params.id,positive||null,negative||null,praise||null,suggestion||null]); ok(res,null,'Feedback salvo.'); };
 export const returnRequest = async (req,res) => { await ensure(req.params.id,req.surveyToken); const {name,contact,preferredChannel,message}=req.body; if(!contact) throw new AppError('Contato é obrigatório para solicitar retorno.',422); await pool.execute("INSERT INTO return_requests (id,survey_id,name,contact,preferred_channel,message,status) VALUES (UUID(),?,?,?,?,?,'open') ON DUPLICATE KEY UPDATE name=VALUES(name),contact=VALUES(contact),preferred_channel=VALUES(preferred_channel),message=VALUES(message)",[req.params.id,name||null,contact,preferredChannel||null,message||null]); ok(res,null,'Solicitação de retorno registrada.'); };
-export const complete = async (req,res) => { await ensure(req.params.id,req.surveyToken); const [required]=await pool.execute('SELECT COUNT(*) count FROM survey_questions sq LEFT JOIN answers a ON a.survey_question_id=sq.id WHERE sq.survey_id=? AND sq.required_snapshot=1 AND a.id IS NULL',[req.params.id]); if(required[0].count) throw new AppError('Existem perguntas obrigatórias sem resposta.',422); await pool.execute("UPDATE surveys SET status='completed',completed_at=UTC_TIMESTAMP() WHERE id=?",[req.params.id]); emitDashboardUpdate({surveyId:req.params.id,type:'survey_completed'}); ok(res,null,'Pesquisa finalizada.'); };
+export const complete = async (req, res) => {
+  const { id } = req.params;
+  await ensure(id, req.surveyToken);
+  const overallRating = req.body?.overallRating;
+  if (overallRating !== undefined && (!Number.isInteger(overallRating) || overallRating < 0 || overallRating > 10)) {
+    throw new AppError('A avaliação geral deve ser um número inteiro de 0 a 10.', 422);
+  }
+  const [[required]] = await pool.execute(
+    'SELECT COUNT(*) count FROM survey_questions sq LEFT JOIN answers a ON a.survey_question_id=sq.id WHERE sq.survey_id=? AND sq.required_snapshot=1 AND a.id IS NULL',
+    [id],
+  );
+  if (required.count) throw new AppError('Existem perguntas obrigatórias sem resposta.', 422);
+  const [result] = await pool.execute(
+    "UPDATE surveys SET status='completed', completed_at=UTC_TIMESTAMP(), overall_rating=? WHERE id=? AND status<>'completed'",
+    [overallRating ?? null, id],
+  );
+  if (result.affectedRows) emitDashboardUpdate({ surveyId: id, type: 'survey_completed' });
+  ok(res, null, 'Pesquisa finalizada.');
+};
