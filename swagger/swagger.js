@@ -13,6 +13,8 @@ const tags = {
   feedback: 'Elogios e sugestões',
   returns: 'Solicitações de retorno',
   reports: 'Relatórios e exportações',
+  invitations: 'Convites e comunicação',
+  notifications: 'Notificações',
   dashboard: 'Dashboard e indicadores',
   tv: 'Painel de TV',
   health: 'Status e saúde da API',
@@ -195,7 +197,7 @@ surveyOperation('', 'get', 'surveys', 'Consultar situação da pesquisa',
   { operationId: 'getSurvey' });
 
 surveyOperation('/attendances', 'post', 'surveys', 'Adicionar atendimento à pesquisa',
-  'A pesquisa deve estar em rascunho. Informe IDs UUID de setor, serviço e turno ativos. O serviço deve pertencer ao setor informado. A data é opcional.',
+  'A pesquisa deve estar em rascunho. Informe IDs UUID de setor, serviço e turno ativos. O serviço deve pertencer ao setor informado. A data é opcional. Reutilize attendanceKey ao repetir o mesmo cadastro após uma falha de conexão.',
   { 201: response('Atendimento adicionado.', ref('Id'), { id: ids.attendance }, 'Atendimento adicionado.'), 422: invalidData },
   { operationId: 'addAttendance', requestBody: body('Attendance', { sectorId: ids.sector, serviceId: ids.service, shiftId: ids.shift, attendanceDate: '2026-01-15' }) });
 
@@ -276,6 +278,69 @@ for (const [key, label] of Object.entries(dimensions)) {
 }
 
 const administrativeErrors = { 401: missingJwt, 403: forbidden, 422: invalidData, 500: failure };
+const invitationId = fictitiousId(26);
+const inviteToken = 'A'.repeat(43);
+const inviteDate = '2026-01-15T13:00:00.000Z';
+const inviteList = pageResponse('InvitationRow', {
+  id: invitationId, channel: 'manual', status: 'active', expiresAt: inviteDate, createdAt: inviteDate, usedAt: null, lastDelivery: null,
+}, 'Página de convites e configuração de comunicação.');
+inviteList.content['application/json'].schema.properties.communication = ref('CommunicationModes');
+inviteList.content['application/json'].schema.required.push('communication');
+inviteList.content['application/json'].example.communication = { email: 'demo', whatsapp: 'demo' };
+add('/api/v1/admin/invitations', 'get', 'invitations', 'Listar convites de pesquisa',
+  'Exige invitations.manage. Filtra por canal e situação. A listagem mostra o registro de comunicação mais recente e o modo de cada adaptador, mantendo links, tokens e contatos fora da resposta.',
+  { 200: inviteList, ...administrativeErrors },
+  { operationId: 'listInvitations', security: bearer, parameters: [
+    ...analysisPaging, statusQuery(['active', 'used', 'expired']),
+    { name: 'channel', in: 'query', schema: { type: 'string', enum: ['manual', 'email', 'whatsapp'] }, description: 'Canal previsto.' },
+  ] });
+add('/api/v1/admin/invitations', 'post', 'invitations', 'Gerar convite individual',
+  'Exige invitations.manage. Gera link de uso único, com validade de 1 a 336 horas. O token e o link só são retornados nesta operação. O servidor persiste somente o hash do token.',
+  { 201: response('Link individual criado.', ref('InvitationNew'), {
+    id: invitationId, token: inviteToken, link: 'https://example.invalid/pesquisa/convite#' + inviteToken,
+    expiresAt: inviteDate, channel: 'manual', status: 'active',
+  }, 'Convite gerado.'), ...administrativeErrors },
+  { operationId: 'createInvitation', security: bearer, requestBody: body('InvitationInput', { channel: 'manual', hours: 72 }, false) });
+
+const invitationMissing = error('Convite inexistente ou credencial inválida.', 'Convite inválido.');
+const invitationExpired = error('Convite expirado.', 'O convite expirou.');
+add('/api/v1/public/invitations/redeem', 'post', 'invitations', 'Resgatar convite de pesquisa',
+  'Acesso público. Envie o token e um nonce aleatório de 32 bytes em hexadecimal. O resgate consome o convite e cria uma pesquisa anônima sem vínculo persistido. Se houver falha na conexão, repita com o mesmo nonce para recuperar a mesma pesquisa. Não divulgue o nonce.',
+  { 200: response('Pesquisa liberada.', ref('SurveyAccess'), { id: ids.survey, surveyToken: '0'.repeat(64) }, 'Pesquisa liberada.'),
+    404: invitationMissing, 409: error('Convite já resgatado com outro nonce.', 'Este convite já foi utilizado.'),
+    410: invitationExpired, 422: invalidData, 500: failure },
+  { operationId: 'redeemInvitation', requestBody: body('InvitationRedeem', { token: inviteToken, nonce: '0'.repeat(64) }) });
+
+add('/api/v1/admin/invitations/{id}/communications', 'post', 'invitations', 'Registrar tentativa de comunicação de um convite',
+  'Exige invitations.manage e o token mostrado na geração. Reutilize deliveryId em uma repetição de rede. No modo demonstração, registra a tentativa sem enviar mensagem. No modo real, accepted significa que o provedor aceitou a solicitação. O endereço do destinatário não é armazenado.',
+  { 200: response('Tentativa registrada.', ref('CommunicationResult'), { status: 'demo', channel: 'email' }, 'Demonstração registrada. Nenhuma mensagem foi enviada.'),
+    ...administrativeErrors, 404: invitationMissing, 409: error('Convite usado ou tentativa em andamento.'),
+    410: invitationExpired, 502: error('Provedor não confirmou a aceitação.'), 503: error('Canal não configurado.') },
+  { operationId: 'communicateInvitation', security: bearer, parameters: [idParameter('id', invitationId, 'UUID do convite.')],
+    requestBody: body('InvitationCommunication', { token: inviteToken, deliveryId: fictitiousId(27), channel: 'email', contact: 'contato@example.invalid' }) });
+
+const notificationId = fictitiousId(28);
+add('/api/v1/notifications', 'get', 'notifications', 'Listar as notificações da própria conta',
+  'Exige JWT Bearer. Retorna somente as notificações do titular da sessão, com o número total de não lidas.',
+  { 200: response('Notificações da sessão.', ref('Notifications'), { unread: 1, items: [{
+    id: notificationId, type: 'question.proposed', title: 'Nova proposta de pergunta',
+    message: 'Uma proposta de pergunta está pendente de revisão.', href: '/admin/perguntas', createdAt: inviteDate, readAt: null,
+  }] }), 401: missingJwt, 422: invalidData, 500: failure },
+  { operationId: 'listNotifications', security: bearer, parameters: [
+    integerQuery('limit', 20, 'Número de notificações recentes.', 1, 100),
+    { name: 'unread', in: 'query', description: 'Filtra somente as não lidas quando true.', schema: { type: 'string', enum: ['true', 'false'], default: 'false' } },
+  ] });
+add('/api/v1/notifications/{id}/read', 'patch', 'notifications', 'Marcar uma notificação como lida',
+  'Exige JWT Bearer. Atualiza somente a notificação do titular da sessão. Repetir a chamada preserva a primeira data de leitura.',
+  { 200: response('Leitura registrada.', ref('Id'), { id: notificationId }, 'Notificação marcada como lida.'),
+    401: missingJwt, 404: error('Notificação inexistente para a sessão.', 'Notificação não encontrada.'), 422: invalidData, 500: failure },
+  { operationId: 'markNotificationRead', security: bearer, parameters: [idParameter('id', notificationId, 'UUID da notificação.')] });
+add('/api/v1/notifications/read-all', 'patch', 'notifications', 'Marcar todas as notificações como lidas',
+  'Exige JWT Bearer. Atualiza apenas notificações não lidas da própria conta.',
+  { 200: response('Leituras registradas.', ref('NotificationUpdates'), { updated: 1 }, 'Notificações marcadas como lidas.'),
+    401: missingJwt, 500: failure },
+  { operationId: 'markAllNotificationsRead', security: bearer });
+
 add('/api/v1/admin/analysis/options', 'get', 'answers', 'Listar setores, serviços e etapas para os filtros',
   'Exige surveys.read, reports.export ou perfil de setor. Retorna opções com histórico de pesquisas concluídas. Usuários de setor veem somente opções dos atendimentos que podem consultar.',
   { 200: response('Opções de análise.', ref('AnalysisOptions'), {
@@ -496,13 +561,13 @@ export default {
   openapi: '3.0.3',
   info: {
     title: 'API Ouvidoria FHDOD',
-    version: '1.3.0',
+    version: '1.4.0',
     description: [
       'API de pesquisa de satisfação hospitalar. Use o Swagger aberto no servidor que pretende testar.',
       'Para a equipe: execute **Iniciar sessão** com sua conta de demonstração. Em **Authorize**, cole somente o accessToken no esquema bearerAuth. A permissão dashboard.read é exigida no dashboard. O papel de setor do seed não recebe dashboard.read nem users.manage.',
       'Para uma pessoa respondente: crie uma pesquisa, copie o id e autorize o esquema surveyToken com o valor retornado. Consulte setores, serviços e turnos, adicione um atendimento, inicie a pesquisa, liste as perguntas, responda e finalize.',
       'Os exemplos usam identificadores fictícios. Durante os testes, substitua os IDs pelos retornados pela API e informe somente dados de demonstração.',
-      'Eventos Socket.IO e lacunas da implementação estão descritos no guia de integração do repositório de demonstração.',
+      'Socket.IO: dashboard:update usa o canal padrão protegido por dashboard.read. notifications:update usa o namespace /notifications, exige JWT em auth.token e é entregue somente ao titular. O evento sinaliza que a central deve recarregar, sem transmitir conteúdo.',
     ].join('\n\n'),
   },
   servers: [

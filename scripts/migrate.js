@@ -18,6 +18,7 @@ try {
   if (!columns.length) {
     await pool.query('ALTER TABLE surveys ADD COLUMN overall_rating TINYINT UNSIGNED NULL');
   }
+  await pool.query(await fs.readFile(new URL('../database/migrations/001_user_notifications.sql', import.meta.url), 'utf8'));
   console.log('Banco e schema aplicados.');
 } finally {
   await pool.end();

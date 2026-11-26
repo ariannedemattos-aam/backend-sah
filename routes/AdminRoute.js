@@ -2,6 +2,7 @@ import { Router } from 'express';
 import * as admin from '../controllers/AdminController.js';
 import * as evaluation from '../controllers/EvaluationController.js';
 import { exportReport } from '../controllers/ReportController.js';
+import * as invitation from '../controllers/InvitationController.js';
 import { authenticate, requirePermission } from '../middlewares/authMiddleware.js';
 import { asyncRoute } from '../utils/asyncRoute.js';
 import { isSector } from '../services/EvaluationData.js';
@@ -13,6 +14,7 @@ const manage = requirePermission('users.manage');
 const surveys = requirePermission('surveys.read');
 const returns = requirePermission('return_requests.manage');
 const reports = requirePermission('reports.export');
+const invitations = requirePermission('invitations.manage');
 const feedbackAccess = (req, res, next) => isSector(req.user) ? next() : surveys(req, res, next);
 const analysisAccess = (req, res, next) => isSector(req.user)
   ? next() : requirePermission('surveys.read', 'reports.export')(req, res, next);
@@ -27,6 +29,9 @@ router.get('/return-requests/:id/contact', returns, noStore, asyncRoute(evaluati
 router.patch('/return-requests/:id/status', returns, noStore, asyncRoute(evaluation.updateReturnStatus));
 router.get('/reports/excel', reports, noStore, asyncRoute(exportReport('excel')));
 router.get('/reports/pdf', reports, noStore, asyncRoute(exportReport('pdf')));
+router.get('/invitations', invitations, noStore, asyncRoute(invitation.list));
+router.post('/invitations', invitations, noStore, asyncRoute(invitation.create));
+router.post('/invitations/:id/communications', invitations, noStore, asyncRoute(invitation.communicate));
 router.get('/dashboard/overview', dashboard, asyncRoute(admin.overview));
 
 for (const dimension of ['sectors', 'services', 'teams', 'stages', 'shifts']) {

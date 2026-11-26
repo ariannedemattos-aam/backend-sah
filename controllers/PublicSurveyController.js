@@ -4,12 +4,14 @@ import pool from '../config/database.js';
 import { env } from '../config/env.js';
 import { ok } from '../utils/response.js';
 import { AppError } from '../utils/errors.js';
-import { emitDashboardUpdate } from '../services/SocketService.js';
+import { emitDashboardUpdate, emitNotificationUpdates } from '../services/SocketService.js';
+import { notifyPermission } from '../services/Notifications.js';
 
 const id = z.string().uuid();
 const attendanceInput = z.object({
   sectorId: id, serviceId: id, shiftId: id,
   attendanceDate: z.string().date().nullish(),
+  attendanceKey: id.optional(),
 });
 const paging = z.object({
   limit: z.coerce.number().int().min(1).max(30).default(20),
@@ -101,9 +103,20 @@ export async function survey(req, res) {
 }
 
 export async function addAttendance(req, res) {
-  const { sectorId, serviceId, shiftId, attendanceDate } = attendanceInput.parse(req.body);
-  const attendanceId = crypto.randomUUID();
+  const { sectorId, serviceId, shiftId, attendanceDate, attendanceKey } = attendanceInput.parse(req.body);
+  const attendanceId = attendanceKey || crypto.randomUUID();
   await change(req, async (conn, survey) => {
+    if (attendanceKey) {
+      const [[existing]] = await conn.execute(
+        "SELECT survey_id,sector_id,service_id,shift_id,DATE_FORMAT(attendance_date,'%Y-%m-%d') attendance_date FROM survey_attendances WHERE id=?",
+        [attendanceKey],
+      );
+      if (existing) {
+        if (existing.survey_id === survey.id && existing.sector_id === sectorId && existing.service_id === serviceId
+            && existing.shift_id === shiftId && existing.attendance_date === (attendanceDate ?? null)) return;
+        throw new AppError('Identificador de atendimento já utilizado.', 409);
+      }
+    }
     requireStatus(survey, 'draft');
     const [[valid]] = await conn.execute(
       'SELECT v.id FROM services v JOIN sectors s ON s.id=v.sector_id JOIN shifts sh ON sh.id=? '
@@ -229,8 +242,8 @@ export async function returnRequest(req, res) {
 
 export async function complete(req, res) {
   const { overallRating } = completeInput.parse(req.body);
-  const changed = await change(req, async (conn, survey) => {
-    if (survey.status === 'completed') return false;
+  const { changed, recipients } = await change(req, async (conn, survey) => {
+    if (survey.status === 'completed') return { changed: false, recipients: [] };
     requireStatus(survey, 'in_progress');
     const [[required]] = await conn.execute(
       'SELECT COUNT(*) count FROM survey_questions sq LEFT JOIN answers a ON a.survey_question_id=sq.id WHERE sq.survey_id=? AND sq.required_snapshot=1 AND a.id IS NULL',
@@ -238,8 +251,16 @@ export async function complete(req, res) {
     );
     if (required.count) throw new AppError('Existem perguntas obrigatórias sem resposta.', 422);
     await conn.execute("UPDATE surveys SET status='completed',completed_at=UTC_TIMESTAMP(),overall_rating=? WHERE id=?", [overallRating ?? null, survey.id]);
-    return true;
+    const [[request]] = await conn.execute('SELECT 1 AS present FROM return_requests WHERE survey_id=?', [survey.id]);
+    const recipients = request ? await notifyPermission(conn, ['return_requests.manage'], {
+      type: 'return.created', title: 'Nova solicitação de retorno',
+      message: 'Uma pesquisa concluída inclui pedido de retorno.', href: '/admin/retornos',
+    }, { surveyId: survey.id }) : [];
+    return { changed: true, recipients };
   });
-  if (changed) emitDashboardUpdate({ surveyId: req.params.id, type: 'survey_completed' });
+  if (changed) {
+    emitDashboardUpdate({ surveyId: req.params.id, type: 'survey_completed' });
+    emitNotificationUpdates(recipients);
+  }
   ok(res, null, 'Pesquisa finalizada.');
 }

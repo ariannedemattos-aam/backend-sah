@@ -52,6 +52,7 @@ export const schemas = {
   }, ['id', 'status', 'createdAt', 'completedAt']),
   Attendance: object({
     sectorId: uuid, serviceId: uuid, shiftId: uuid, attendanceDate: nullable({ type: 'string', format: 'date' }),
+    attendanceKey: { ...uuid, description: 'UUID do dispositivo para repetir o mesmo cadastro sem duplicá-lo.' },
   }, ['sectorId', 'serviceId', 'shiftId']),
   SurveyQuestion: object({
     ...questionKeys, stage: nullable(string), options: list(object({ value: string, label: string }, ['value', 'label'])),
@@ -119,6 +120,39 @@ export const schemas = {
     name: nullable(string), contact: string, preferredChannel: nullable(string), message: nullable(string),
   }, ['id', 'status', 'name', 'contact', 'preferredChannel', 'message']),
   ReturnStatusUpdate: { allOf: [ref('Id'), ref('ReturnStatusInput')] },
+  InvitationInput: object({
+    channel: { type: 'string', enum: ['manual', 'email', 'whatsapp'], default: 'manual' },
+    hours: { type: 'integer', minimum: 1, maximum: 336, default: 72 },
+  }),
+  InvitationRow: object({
+    id: uuid, channel: { type: 'string', enum: ['manual', 'email', 'whatsapp'] },
+    status: { type: 'string', enum: ['active', 'used', 'expired'] },
+    expiresAt: timestamp, createdAt: nullable(timestamp), usedAt: nullable(timestamp),
+    lastDelivery: nullable(string),
+  }, ['id', 'channel', 'status', 'expiresAt', 'createdAt', 'usedAt', 'lastDelivery']),
+  InvitationNew: object({
+    id: uuid, token: { ...string, pattern: '^[A-Za-z0-9_-]{43}$' }, link: { ...string, format: 'uri' }, expiresAt: timestamp,
+    channel: { type: 'string', enum: ['manual', 'email', 'whatsapp'] }, status: { type: 'string', enum: ['active'] },
+  }, ['id', 'token', 'link', 'expiresAt', 'channel', 'status']),
+  InvitationRedeem: object({
+    token: { ...string, pattern: '^[A-Za-z0-9_-]{43}$' }, nonce: { ...string, pattern: '^[a-f0-9]{64}$' },
+  }, ['token', 'nonce']),
+  CommunicationModes: object({
+    email: { type: 'string', enum: ['demo', 'live', 'disabled'] },
+    whatsapp: { type: 'string', enum: ['demo', 'live', 'disabled'] },
+  }, ['email', 'whatsapp']),
+  InvitationCommunication: object({
+    token: { ...string, pattern: '^[A-Za-z0-9_-]{43}$' }, deliveryId: uuid, contact: { ...string, maxLength: 255 },
+    channel: { type: 'string', enum: ['email', 'whatsapp'] },
+  }, ['token', 'deliveryId', 'contact', 'channel']),
+  CommunicationResult: object({
+    status: { type: 'string', enum: ['demo', 'accepted'] }, channel: { type: 'string', enum: ['email', 'whatsapp'] },
+  }, ['status', 'channel']),
+  UserNotification: object({
+    id: uuid, type: string, title: string, message: string, href: string, createdAt: timestamp, readAt: nullable(timestamp),
+  }, ['id', 'type', 'title', 'message', 'href', 'createdAt', 'readAt']),
+  Notifications: object({ unread: count, items: list(ref('UserNotification')) }, ['unread', 'items']),
+  NotificationUpdates: object({ updated: count }, ['updated']),
   Pagination: object({ page: count, limit: count, total: count, totalPages: count }, ['page', 'limit', 'total', 'totalPages']),
   StatusInput: object({ active: { type: 'boolean' } }, ['active']),
   CatalogStatus: object({ id: uuid, active: { type: 'boolean' } }, ['id', 'active']),

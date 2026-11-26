@@ -4,6 +4,8 @@ import pool from '../config/database.js';
 import { AppError } from '../utils/errors.js';
 import { ok, paginated } from '../utils/response.js';
 import { withTransaction } from '../utils/withTransaction.js';
+import { notifyPermission, notifyQuestionAuthor } from '../services/Notifications.js';
+import { emitNotificationUpdates } from '../services/SocketService.js';
 
 const questionFields = z.object({
   prompt: z.string().trim().min(10).max(500),
@@ -95,7 +97,7 @@ export async function propose(req, res) {
   const input = questionInput.parse(req.body);
   const id = randomUUID();
   const status = 'pending';
-  await withTransaction(async conn => {
+  const recipients = await withTransaction(async conn => {
     const [[service]] = await conn.execute(
       'SELECT v.sector_id AS sectorId FROM services v JOIN sectors s ON s.id=v.sector_id WHERE v.id=? AND v.is_active=1 AND s.is_active=1 FOR SHARE',
       [input.serviceId],
@@ -110,7 +112,12 @@ export async function propose(req, res) {
     await storeVersion(conn, { id, version: 1, input, author: req.user.sub });
     await conn.execute('INSERT INTO question_assignments (id, question_id, sector_id, service_id, display_order) VALUES (UUID(),?,?,?,100)',
       [id, service.sectorId, input.serviceId]);
+    return notifyPermission(conn, ['questions.approve', 'questions.reject'], {
+      type: 'question.proposed', title: 'Nova proposta de pergunta',
+      message: 'Uma proposta de pergunta está pendente de revisão.', href: '/admin/perguntas',
+    });
   });
+  emitNotificationUpdates(recipients);
   ok(res, { id, status }, 'Pergunta enviada para aprovação.', 201);
 }
 
@@ -182,14 +189,16 @@ export function review(action) {
     const id = z.string().uuid().parse(req.params.id);
     const { justification } = reviewInput.parse(req.body);
     const status = action === 'approved' ? 'active' : 'rejected';
-    await withTransaction(async conn => {
-      const [[question]] = await conn.execute('SELECT status FROM questions WHERE id=? FOR UPDATE', [id]);
+    const recipients = await withTransaction(async conn => {
+      const [[question]] = await conn.execute('SELECT status,created_by createdBy FROM questions WHERE id=? FOR UPDATE', [id]);
       if (!question) throw new AppError('Pergunta não encontrada.', 404);
       if (question.status !== 'pending') throw new AppError('A pergunta já foi analisada.', 409);
       await conn.execute('UPDATE questions SET status=? WHERE id=?', [status, id]);
       await conn.execute('INSERT INTO question_approvals (id, question_id, reviewer_id, action, justification) VALUES (UUID(),?,?,?,?)',
         [id, req.user.sub, action, justification]);
+      return notifyQuestionAuthor(conn, question.createdBy, action === 'approved');
     });
+    emitNotificationUpdates(recipients);
     ok(res, { id, status }, action === 'approved' ? 'Pergunta aprovada e ativada.' : 'Pergunta rejeitada.');
   };
 }
