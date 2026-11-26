@@ -18,6 +18,10 @@ const named = { id: uuid, name: string };
 const questionType = { type: 'string', enum: ['rating', 'text', 'single_choice', 'multiple_choice'] };
 const questionKeys = { id: uuid, attendanceId: nullable(uuid), text: string, type: questionType, required: flag, displayOrder: count };
 const token = { type: 'string', description: 'Valor retornado pela API. Os exemplos contêm marcadores fictícios.' };
+const catalogInput = { name: { ...string, minLength: 1, maxLength: 120 }, description: nullable({ ...string, maxLength: 2000 }) };
+const catalogSlug = nullable({ ...string, minLength: 1, maxLength: 140 });
+const catalogBase = { ...named, created_at: nullable(timestamp) };
+const catalogRecord = { ...catalogBase, description: nullable(string), is_active: nullable(flag) };
 
 export const schemas = {
   Error: object({ success: { type: 'boolean', enum: [false] }, message: string, errors: list(object({ field: string, message: string }, ['field', 'message'])) }, ['success', 'message']),
@@ -50,15 +54,16 @@ export const schemas = {
     sectorId: uuid, serviceId: uuid, shiftId: uuid, attendanceDate: nullable({ type: 'string', format: 'date' }),
   }, ['sectorId', 'serviceId', 'shiftId']),
   SurveyQuestion: object({
-    ...questionKeys, options: list(object({ value: string, label: string }, ['value', 'label'])),
+    ...questionKeys, stage: nullable(string), options: list(object({ value: string, label: string }, ['value', 'label'])),
   }, Object.keys(questionKeys)),
   NextSurveyQuestion: object({
     id: uuid, attendance_id: nullable(uuid), prompt_snapshot: string, type_snapshot: questionType,
     required_snapshot: flag, display_order: count,
   }, ['id', 'attendance_id', 'prompt_snapshot', 'type_snapshot', 'required_snapshot', 'display_order']),
   Answer: object({
-    value: nullable({ type: 'number', description: 'Nota armazenada em DECIMAL(5,2). O servidor não valida a escala por tipo.' }),
-    textValue: nullable(string),
+    value: nullable({ type: 'integer', minimum: 1, maximum: 5, description: 'Nota da pergunta do tipo rating.' }),
+    textValue: nullable({ ...string, maxLength: 2000, description: 'Texto livre ou valor de uma opção de escolha única.' }),
+    optionValues: { type: 'array', items: { ...string, minLength: 1, maxLength: 100 }, minItems: 1, maxItems: 10, uniqueItems: true },
   }),
   Feedback: object({
     positive: nullable(string), negative: nullable(string), praise: nullable(string), suggestion: nullable(string),
@@ -67,18 +72,49 @@ export const schemas = {
     name: nullable({ ...string, maxLength: 150 }),
     contact: { ...string, minLength: 1, maxLength: 255 },
     preferredChannel: nullable({ ...string, maxLength: 30 }),
-    message: nullable(string),
+    message: nullable({ ...string, maxLength: 500 }),
   }, ['contact']),
   Completion: object({ overallRating: { type: 'integer', minimum: 0, maximum: 10 } }),
   DashboardOverview: object({
     surveys: object({ total: count, completed: nullable({ type: 'string' }) }, ['total', 'completed']),
     answers: count,
     averageRating: average,
-  }, ['surveys', 'answers', 'averageRating']),
-  AdminCatalogInput: object({ name: { ...string, minLength: 1 }, description: nullable(string) }, ['name']),
-  AdminCatalogInputWithSlug: {
-    allOf: [ref('AdminCatalogInput'), object({ slug: nullable(string) })],
+    positiveAnswers: count,
+    ratedAnswers: count,
+  }, ['surveys', 'answers', 'averageRating', 'positiveAnswers', 'ratedAnswers']),
+  Dimension: object({ label: string, responses: count, averageRating: average }, ['label', 'responses', 'averageRating']),
+  Pagination: object({ page: count, limit: count, total: count, totalPages: count }, ['page', 'limit', 'total', 'totalPages']),
+  InputSector: object({ ...catalogInput, slug: catalogSlug }, ['name']),
+  InputService: object({ ...catalogInput, slug: catalogSlug, sector_id: nullable(uuid) }, ['name']),
+  InputStage: object(catalogInput, ['name']),
+  InputTeam: object({ ...catalogInput, sector_id: nullable(uuid), service_id: nullable(uuid) }, ['name']),
+  InputShift: object({
+    ...catalogInput, name: { ...string, minLength: 1, maxLength: 50 },
+    display_order: { ...count, maximum: 2147483647, default: 0 },
+  }, ['name']),
+  AdminSector: object({ ...catalogRecord, slug: nullable(string), updated_at: nullable(timestamp) }),
+  AdminService: object({ ...catalogRecord, slug: nullable(string), sector_id: nullable(uuid), updated_at: nullable(timestamp) }),
+  AdminStage: object(catalogRecord),
+  AdminTeam: object({ ...catalogRecord, sector_id: nullable(uuid), service_id: nullable(uuid) }),
+  AdminShift: object({ ...catalogRecord, display_order: nullable(count) }),
+  AdminUser: object({ ...catalogBase, role_id: uuid, email, is_active: flag, updated_at: nullable(timestamp) }),
+  AdminRole: object(catalogBase),
+  AdminPermission: object({ ...catalogBase, description: nullable(string) }),
+  QuestionInput: object({
+    prompt: { ...string, minLength: 10, maxLength: 500 },
+    type: questionType,
+    serviceId: uuid,
+    required: { type: 'boolean', default: false },
+    options: { type: 'array', items: { ...string, minLength: 1, maxLength: 100 }, minItems: 2, maxItems: 10, uniqueItems: true },
+  }, ['prompt', 'type', 'serviceId']),
+  QuestionService: object({ ...named, sectorName: string }, ['id', 'name', 'sectorName']),
+  QuestionState: object({ id: uuid, status: { type: 'string', enum: ['pending', 'approved', 'active', 'inactive', 'rejected'] } }, ['id', 'status']),
+  QuestionEntry: {
+    allOf: [ref('QuestionState'), object({
+      prompt: string, type: questionType, required: nullable(flag), createdAt: timestamp, services: nullable(string),
+    }, ['prompt', 'type', 'required', 'createdAt', 'services'])],
   },
+  QuestionReview: object({ justification: { ...string, minLength: 3, maxLength: 500 } }, ['justification']),
   TvOverview: object({ responses: count, averageRating: average }, ['responses', 'averageRating']),
   TvSector: {
     allOf: [ref('TvOverview'), object({ name: string }, ['name'])],

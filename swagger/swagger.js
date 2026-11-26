@@ -7,6 +7,7 @@ const tags = {
   sectors: 'Setores hospitalares',
   services: 'Serviços e etapas de atendimento',
   questions: 'Perguntas e questionários',
+  approvals: 'Aprovação de perguntas',
   surveys: 'Pesquisas de satisfação',
   answers: 'Respostas e avaliações',
   feedback: 'Elogios e sugestões',
@@ -18,7 +19,7 @@ const tags = {
 const tagDescriptions = {
   auth: 'Sessões JWT. Use o accessToken no Authorize e o refreshToken no corpo de renovação ou encerramento.',
   users: 'Identidade e permissões da sessão. O catálogo administrativo está registrado, com as limitações descritas nas operações.',
-  admin: 'Rotas administrativas registradas. O status de cada operação reflete o comportamento da versão publicada.',
+  admin: 'Catálogos internos protegidos pela permissão users.manage.',
   health: 'Verifica se a API responde. A rota de saúde não consulta o banco.',
 };
 
@@ -57,6 +58,8 @@ const rateLimit = {
 };
 const missingJwt = error('JWT Bearer ausente, inválido ou expirado.', 'Token inválido ou expirado.');
 const forbidden = error('A sessão não tem a permissão exigida.', 'Acesso não autorizado.');
+const invalidData = error('O corpo ou os parâmetros não atendem aos campos e limites esperados.', 'Dados inválidos.');
+const surveyConflict = error('A pesquisa está em outra etapa.', 'A pesquisa não está na etapa necessária para esta operação.');
 const invalidSurvey = error('Pesquisa não encontrada ou token incompatível com o identificador.', 'Pesquisa não encontrada ou acesso inválido.');
 const missingSurveyToken = error('Cabeçalho X-Survey-Token obrigatório.', 'Token da pesquisa obrigatório.');
 const noContent = { description: 'Operação concluída. A resposta não tem corpo.' };
@@ -89,7 +92,8 @@ function surveyOperation(suffix, method, group, summary, description, responses,
   const { errorResponses, parameters = [], ...rest } = options;
   add('/api/v1/public/surveys/{id}' + suffix, method, group, summary,
     'Público com o token da própria pesquisa. ' + description,
-    { ...responses, 401: missingSurveyToken, 404: invalidSurvey, 500: failure, ...errorResponses },
+    { ...responses, 401: missingSurveyToken, 404: invalidSurvey, 500: failure,
+      ...(method !== 'get' && { 409: surveyConflict }), ...errorResponses },
     { ...rest, parameters: [surveyId, ...parameters], security: surveyToken });
 }
 
@@ -168,26 +172,26 @@ surveyOperation('', 'get', 'surveys', 'Consultar situação da pesquisa',
   { operationId: 'getSurvey' });
 
 surveyOperation('/attendances', 'post', 'surveys', 'Adicionar atendimento à pesquisa',
-  'Informe IDs existentes de setor, serviço e turno, obtidos no catálogo público. A data é opcional. A API não verifica se o serviço pertence ao setor informado. IDs inválidos podem resultar em erro de banco.',
-  { 201: response('Atendimento adicionado.', ref('Id'), { id: ids.attendance }, 'Atendimento adicionado.') },
+  'A pesquisa deve estar em rascunho. Informe IDs UUID de setor, serviço e turno ativos. O serviço deve pertencer ao setor informado. A data é opcional.',
+  { 201: response('Atendimento adicionado.', ref('Id'), { id: ids.attendance }, 'Atendimento adicionado.'), 422: invalidData },
   { operationId: 'addAttendance', requestBody: body('Attendance', { sectorId: ids.sector, serviceId: ids.service, shiftId: ids.shift, attendanceDate: '2026-01-15' }) });
 
 surveyOperation('/attendances/{attendanceId}', 'delete', 'surveys', 'Remover atendimento da pesquisa',
-  'Recomendado antes de iniciar a pesquisa. Se o atendimento não pertencer à pesquisa ou não existir, retorna 204 sem remover registros. Referências de perguntas já geradas podem impedir a exclusão e resultar em 500.',
+  'Permitido enquanto a pesquisa está em rascunho. Se o atendimento não pertencer à pesquisa ou não existir, retorna 204 sem remover registros.',
   { 204: noContent },
   { operationId: 'removeAttendance', parameters: [idParameter('attendanceId', ids.attendance, 'ID retornado ao adicionar o atendimento.')] });
 
 surveyOperation('/start', 'post', 'surveys', 'Iniciar preenchimento da pesquisa',
-  'Sem corpo obrigatório. Gera as perguntas aplicáveis a partir dos atendimentos cadastrados, conserva o texto e o tipo usados na pesquisa e marca o estado como in_progress.',
-  { 200: response('Pesquisa iniciada.', noData, null, 'Pesquisa iniciada.') },
+  'Sem corpo obrigatório. Exige um atendimento cadastrado, gera as perguntas de vínculos ativos e marca o estado como in_progress. Repetir a chamada enquanto está em preenchimento retorna 200 sem gerar perguntas novamente.',
+  { 200: response('Pesquisa iniciada.', noData, null, 'Pesquisa iniciada.'), 422: error('Pesquisa sem atendimento.', 'Adicione um atendimento antes de iniciar a pesquisa.') },
   { operationId: 'startSurvey' });
 
 surveyOperation('/questions', 'get', 'questions', 'Listar perguntas da pesquisa',
-  'Use o id de cada item para responder. O limite padrão é 20, limitado a 30; offset menor que zero vira zero. Use inteiros não negativos, pois não há validação de todos os formatos pelo servidor.',
-  { 200: response('Perguntas e opções da pesquisa.', list(ref('SurveyQuestion')), [question]) },
+  'Use o id de cada item para responder. Informe limit de 1 a 30 e offset de 0 a 10000. As opções respeitam a ordem do cadastro.',
+  { 200: response('Perguntas e opções da pesquisa.', list(ref('SurveyQuestion')), [{ ...question, stage: 'Recepção' }]), 422: invalidData },
   { operationId: 'listSurveyQuestions', parameters: [
     integerQuery('limit', 20, 'Quantidade máxima de perguntas.', 1, 30),
-    integerQuery('offset', 0, 'Quantidade de perguntas a pular.', 0),
+    integerQuery('offset', 0, 'Quantidade de perguntas a pular.', 0, 10000),
   ] });
 
 surveyOperation('/next-question', 'get', 'questions', 'Consultar próxima pergunta sem resposta',
@@ -199,7 +203,7 @@ surveyOperation('/next-question', 'get', 'questions', 'Consultar próxima pergun
   { operationId: 'getNextSurveyQuestion' });
 
 surveyOperation('/answers/{surveyQuestionId}', 'put', 'answers', 'Salvar resposta a uma pergunta',
-  'Salva ou substitui a resposta. Use value para uma nota numérica e textValue para texto. Perguntas obrigatórias exigem value não nulo ou textValue não vazio. O tipo, a escala e a seleção de opções não têm validação específica no servidor.',
+  'A pesquisa deve estar em preenchimento. Use value de 1 a 5 para nota, textValue para texto ou escolha única e optionValues para múltipla escolha. Para escolhas, envie valores existentes nas opções. Uma questão obrigatória exige resposta do tipo correspondente.',
   { 200: response('Resposta registrada.', noData, null, 'Resposta salva.') },
   {
     operationId: 'saveSurveyAnswer',
@@ -207,24 +211,24 @@ surveyOperation('/answers/{surveyQuestionId}', 'put', 'answers', 'Salvar respost
     requestBody: body('Answer', { value: 5 }),
     errorResponses: {
       404: error('Pesquisa, credencial ou pergunta não encontrada para essa pesquisa.', 'Pergunta não encontrada.'),
-      422: error('Pergunta obrigatória sem resposta.', 'Resposta obrigatória.'),
+      422: error('Resposta obrigatória ausente ou incompatível com o tipo ou opções.', 'Resposta incompatível com o tipo ou com as opções da pergunta.'),
     },
   });
 
 surveyOperation('/feedback', 'put', 'feedback', 'Salvar elogios e sugestões',
-  'Salva ou substitui o registro de feedback da pesquisa. Todos os campos são opcionais; campos omitidos ou vazios passam a null. O front-end envia comentários livres em suggestion.',
-  { 200: response('Feedback salvo.', noData, null, 'Feedback salvo.') },
+  'A pesquisa deve estar em preenchimento. Todos os campos são opcionais; textos omitidos ou vazios passam a null. Cada campo aceita até 500 caracteres na configuração padrão. O front-end envia comentários livres em suggestion.',
+  { 200: response('Feedback salvo.', noData, null, 'Feedback salvo.'), 422: invalidData },
   { operationId: 'saveSurveyFeedback', requestBody: body('Feedback', { positive: 'A recepção fictícia foi organizada.', negative: 'A sinalização fictícia pode melhorar.', praise: 'Equipe de demonstração atenciosa.', suggestion: 'Incluir uma placa fictícia de orientação.' }) });
 
 surveyOperation('/return-request', 'put', 'returns', 'Registrar pedido de retorno',
-  'O contato é obrigatório. Salva ou substitui os dados do pedido de retorno. A operação apenas registra o pedido e não envia e-mail nem WhatsApp.',
+  'A pesquisa deve estar em preenchimento. O contato é obrigatório. Salva ou substitui o pedido de retorno. A operação apenas registra o pedido e não envia e-mail nem WhatsApp.',
   {
     200: response('Pedido registrado.', noData, null, 'Solicitação de retorno registrada.'),
-    422: error('Contato ausente ou vazio.', 'Contato é obrigatório para solicitar retorno.'),
+    422: invalidData,
   }, { operationId: 'saveReturnRequest', requestBody: body('ReturnRequest', { name: 'Pessoa Fictícia', contact: 'retorno@example.invalid', preferredChannel: 'email', message: 'Pedido de demonstração.' }) });
 
 surveyOperation('/complete', 'post', 'answers', 'Finalizar pesquisa de satisfação',
-  'Exige respostas para todas as perguntas obrigatórias. A nota geral, se informada, deve ser um inteiro de 0 a 10. A primeira conclusão armazena o resultado e emite dashboard:update. Repetir a conclusão de uma pesquisa já concluída não substitui a nota nem emite outro evento, desde que a pesquisa permaneça concluída.',
+  'Exige pesquisa em preenchimento com todas as perguntas obrigatórias respondidas. A nota geral opcional é um inteiro de 0 a 10. A primeira conclusão registra o resultado e emite dashboard:update aos assinantes autorizados. Uma repetição não substitui a nota nem emite outro evento.',
   {
     200: response('Pesquisa finalizada.', noData, null, 'Pesquisa finalizada.'),
     422: error('Nota geral inválida ou perguntas obrigatórias pendentes.', 'Existem perguntas obrigatórias sem resposta.'),
@@ -233,7 +237,7 @@ surveyOperation('/complete', 'post', 'answers', 'Finalizar pesquisa de satisfaç
 add('/api/v1/admin/dashboard/overview', 'get', 'dashboard', 'Consultar resumo do dashboard',
   'Exige JWT Bearer com dashboard.read. Mostra totais globais, sem filtros de período. A média usa as notas das respostas individuais, e não a nota geral de encerramento.',
   {
-    200: response('Resumo dos indicadores.', ref('DashboardOverview'), { surveys: { total: 2, completed: '1' }, answers: 5, averageRating: '4.60' }),
+    200: response('Resumo dos indicadores.', ref('DashboardOverview'), { surveys: { total: 2, completed: '1' }, answers: 5, averageRating: '4.60', positiveAnswers: 4, ratedAnswers: 5 }),
     401: missingJwt, 403: forbidden, 500: failure,
   }, { operationId: 'getDashboardOverview', security: bearer });
 
@@ -242,42 +246,98 @@ const dimensions = {
 };
 for (const [key, label] of Object.entries(dimensions)) {
   add('/api/v1/admin/dashboard/' + key, 'get', 'dashboard', 'Consultar indicadores por ' + label,
-    'Exige JWT Bearer com dashboard.read. Nesta versão, a rota está registrada com um caminho fixo e o controlador espera req.params.dimension. A operação retorna 404 mesmo para um administrador autorizado.',
-    { 401: missingJwt, 403: forbidden, 404: error('Dimensão indisponível nesta versão.', 'Indicador inválido.') },
+    'Exige JWT Bearer com dashboard.read. Agrupa respostas com vínculo à dimensão e retorna quantidade e média das notas. Categorias sem respostas vinculadas não aparecem.',
+    { 200: response('Indicadores agrupados.', list(ref('Dimension')), [{ label: 'Grupo fictício', responses: 8, averageRating: '4.25' }]), 401: missingJwt, 403: forbidden, 500: failure },
     { operationId: 'getDashboard_' + key, security: bearer });
 }
 
 const resources = {
-  sectors: { label: 'setores', name: 'Setor Fictício', slug: 'setor-ficticio' },
-  services: { label: 'serviços', name: 'Serviço Fictício', slug: 'servico-ficticio' },
-  stages: { label: 'etapas', name: 'Etapa Fictícia' },
-  teams: { label: 'equipes', name: 'Equipe Fictícia' },
-  shifts: { label: 'turnos', name: 'Turno Fictício' },
-  users: { label: 'usuários' }, roles: { label: 'papéis' }, permissions: { label: 'permissões' },
+  sectors: { label: 'setores', name: 'Setor Fictício', entity: 'Sector', fields: { slug: 'setor-ficticio' } },
+  services: { label: 'serviços', name: 'Serviço Fictício', entity: 'Service', fields: { slug: 'servico-ficticio', sector_id: ids.sector } },
+  stages: { label: 'etapas', name: 'Etapa Fictícia', entity: 'Stage' },
+  teams: { label: 'equipes', name: 'Equipe Fictícia', entity: 'Team', fields: { sector_id: ids.sector, service_id: ids.service } },
+  shifts: { label: 'turnos', name: 'Turno Fictício', entity: 'Shift', fields: { display_order: 2 } },
+  users: { label: 'usuários', entity: 'User', fields: { email: 'colaborador@example.invalid', role_id: fictitiousId(11) } },
+  roles: { label: 'papéis', entity: 'Role' },
+  permissions: { label: 'permissões', entity: 'Permission' },
 };
-for (const [key, { label, name, slug }] of Object.entries(resources)) {
+for (const [key, { label, name, entity, fields }] of Object.entries(resources)) {
   const group = name ? 'admin' : 'users';
   const path = '/api/v1/admin/' + key;
+  const example = {
+    id: fictitiousId(14), name: name || 'Registro fictício', created_at: '2026-01-15T13:00:00.000Z',
+    ...(key !== 'roles' && key !== 'users' && { description: 'Registro demonstrativo.' }),
+    ...((name || key === 'users') && { is_active: 1 }),
+    ...(['sectors', 'services', 'users'].includes(key) && { updated_at: '2026-01-15T13:00:00.000Z' }),
+    ...fields,
+  };
   add(path, 'get', group, 'Listar ' + label + ' na administração',
-    'Exige JWT Bearer com users.manage. A rota fixa não fornece req.params.resource ao controlador e retorna 404. O código de paginação por page e limit não chega a ser executado.',
-    { 401: missingJwt, 403: forbidden, 404: error('Listagem indisponível nesta versão.', 'Recurso inválido.') },
+    'Exige JWT Bearer com users.manage. A listagem é paginada. A listagem de usuários retorna exclusivamente dados de cadastro e papel.',
+    {
+      200: { description: 'Página do catálogo.', content: media(object({
+        success: { type: 'boolean', enum: [true] }, data: list(ref('Admin' + entity)), pagination: ref('Pagination'),
+      }, ['success', 'data', 'pagination']), { success: true, data: [example], pagination: { page: 1, limit: 20, total: 1, totalPages: 1 } }) },
+      401: missingJwt, 403: forbidden, 422: invalidData, 500: failure,
+    },
     { operationId: 'listAdmin_' + key, security: bearer, parameters: [
-      integerQuery('page', 1, 'Página prevista no controlador. O parâmetro não chega a ser aplicado nesta versão.', 1),
-      integerQuery('limit', 20, 'Tamanho previsto da página. O controlador prevê máximo de 100.', 1, 100),
+      integerQuery('page', 1, 'Número da página.', 1, 1000000),
+      integerQuery('limit', 20, 'Registros por página.', 1, 100),
     ] });
+  const postResponses = name
+    ? {
+      201: response('Registro criado.', ref('Id'), { id: fictitiousId(14) }, 'Registro criado.'),
+      409: error('Identificador duplicado.', 'Já existe um registro com esse identificador de catálogo.'), 422: invalidData, 500: failure,
+    }
+    : { 400: error('Criação genérica indisponível.', 'Recurso não disponível para criação genérica.') };
   add(path, 'post', group, 'Solicitar criação administrativa para ' + label,
     'Exige JWT Bearer com users.manage. ' + (name
-      ? 'A rota fixa não fornece req.params.resource ao controlador. O corpo descrito corresponde aos campos previstos no controlador; a operação retorna 400 antes de validar os campos ou gravar dados.'
-      : 'O controlador não permite criação genérica deste recurso. A operação retorna 400 sem validar nem gravar o corpo.'),
-    { 400: error('Criação genérica indisponível.', 'Recurso não disponível para criação genérica.'), 401: missingJwt, 403: forbidden },
+      ? 'Valida os campos e retorna o UUID do registro criado. Identificadores de catálogo duplicados retornam 409.'
+      : 'Usuários, papéis e permissões não podem ser criados pelo mecanismo genérico. A operação retorna 400 e não grava dados.'),
+    { ...postResponses, 401: missingJwt, 403: forbidden },
     {
       operationId: 'createAdmin_' + key, security: bearer,
-      ...(name && { requestBody: body(slug ? 'AdminCatalogInputWithSlug' : 'AdminCatalogInput', { name, description: 'Registro de demonstração.', ...(slug && { slug }) }, false) }),
+      ...(name && { requestBody: body('Input' + entity, { name, description: 'Registro de demonstração.', ...fields }) }),
     });
 }
 
+const questionStamp = { id: ids.question, status: 'pending' };
+add('/api/v1/questions', 'get', 'questions', 'Listar propostas e perguntas cadastradas',
+  'Exige questions.read. A administração vê até 100 registros. Colaboradores de setor veem somente as próprias propostas.',
+  { 200: response('Perguntas cadastradas.', list(ref('QuestionEntry')), [{ ...questionStamp, type: 'rating', required: 0, createdAt: '2026-01-15T13:00:00.000Z', services: 'Atendimento de Urgência', prompt: question.text }]),
+    401: missingJwt, 403: forbidden, 500: failure },
+  { operationId: 'listQuestions', security: bearer });
+
+add('/api/v1/questions/services', 'get', 'questions', 'Listar serviços disponíveis para propostas',
+  'Exige questions.propose ou questions.create. Colaboradores de setor veem apenas serviços ativos dos setores atribuídos.',
+  { 200: response('Serviços disponíveis.', list(ref('QuestionService')), [{ id: ids.service, name: 'Atendimento de Urgência', sectorName: 'Pronto Atendimento' }]),
+    401: missingJwt, 403: forbidden, 500: failure },
+  { operationId: 'listQuestionServices', security: bearer });
+
+add('/api/v1/questions', 'post', 'questions', 'Enviar pergunta para aprovação',
+  'Exige questions.propose ou questions.create. Usuários de setor só propõem em serviços dos setores atribuídos. Tipos de escolha exigem de 2 a 10 opções distintas. A pergunta é criada como pending.',
+  { 201: response('Pergunta enviada.', ref('QuestionState'), questionStamp, 'Pergunta enviada para aprovação.'),
+    401: missingJwt, 403: forbidden, 422: invalidData, 500: failure },
+  { operationId: 'proposeQuestion', security: bearer, requestBody: body('QuestionInput', {
+    prompt: 'Como você avalia a orientação recebida para o exame?', type: 'single_choice', serviceId: ids.service, required: false,
+    options: ['Clara', 'Poderia melhorar'],
+  }) });
+
+for (const [action, permission, summary, status] of [
+  ['approve', 'questions.approve', 'Aprovar e ativar uma pergunta', 'active'],
+  ['reject', 'questions.reject', 'Rejeitar uma pergunta', 'rejected'],
+]) {
+  add('/api/v1/questions/{id}/' + action, 'post', 'approvals', summary,
+    'Exige ' + permission + '. Registra a decisão e a justificativa. Apenas perguntas pendentes podem ser analisadas.',
+    { 200: response('Decisão registrada.', ref('QuestionState'), { ...questionStamp, status },
+      action === 'approve' ? 'Pergunta aprovada e ativada.' : 'Pergunta rejeitada.'),
+    401: missingJwt, 403: forbidden, 404: error('Pergunta inexistente.', 'Pergunta não encontrada.'),
+    409: error('Pergunta já analisada.', 'A pergunta já foi analisada.'), 422: invalidData, 500: failure },
+    { operationId: action + 'Question', security: bearer, parameters: [idParameter('id', ids.question, 'UUID retornado na proposta.')],
+      requestBody: body('QuestionReview', { justification: 'Revisão de uma pergunta fictícia.' }) });
+}
+
 add('/api/v1/tvwall/overview', 'get', 'tv', 'Consultar resumo do painel de TV',
-  'Acesso público quando TVWALL_ACCESS_TOKEN não está configurado. Quando configurado, use o esquema tvwallToken no Authorize. Calcula média das respostas numéricas, sem limite mínimo neste endpoint.',
+  'Acesso público quando TVWALL_ACCESS_TOKEN não está configurado. Quando configurado, use o esquema tvwallToken no Authorize. Agrega somente notas de pesquisas concluídas. Abaixo do limite mínimo configurado (padrão 5), retorna contagem zero e média nula.',
   {
     200: response('Indicadores gerais do painel de TV.', ref('TvOverview'), { responses: 15, averageRating: '4.8' }),
     401: error('Token do painel ausente ou incorreto, quando exigido.', 'Token TV Wall inválido.'), 500: failure,
@@ -294,7 +354,7 @@ export default {
   openapi: '3.0.3',
   info: {
     title: 'API Ouvidoria FHDOD',
-    version: '1.0.0',
+    version: '1.1.0',
     description: [
       'API de pesquisa de satisfação hospitalar. Use o Swagger aberto no servidor que pretende testar.',
       'Para a equipe: execute **Iniciar sessão** com sua conta de demonstração. Em **Authorize**, cole somente o accessToken no esquema bearerAuth. A permissão dashboard.read é exigida no dashboard. O papel de setor do seed não recebe dashboard.read nem users.manage.',

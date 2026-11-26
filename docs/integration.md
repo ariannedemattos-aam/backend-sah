@@ -3,7 +3,7 @@
 - Swagger da demonstração no Render: [API FHDOD](https://fhdod-ouvidoria-demo.onrender.com/api-docs/) e [OpenAPI em JSON](https://fhdod-ouvidoria-demo.onrender.com/api-docs.json).
 - Ambiente local: inicie o back-end com `npm start` e abra [Swagger local](http://localhost:3000/api-docs/). Se a porta for diferente, abra o Swagger nessa porta e selecione **Servidor que hospeda este Swagger**.
 - Use o Swagger do próprio ambiente para executar chamadas no mesmo domínio. A API publicada permite o CORS do front-end da demonstração. Os arquivos do Swagger são servidos quando `SWAGGER_ENABLED` está habilitado.
-- O inventário cobre 44 operações de negócio e saúde. Os arquivos e ativos do Swagger, o preflight automático CORS e o transporte Socket.IO são infraestrutura.
+- O inventário cobre 49 operações de negócio e saúde. Os arquivos e ativos do Swagger, o preflight automático CORS e o transporte Socket.IO são infraestrutura.
 
 ## Testes no Swagger
 
@@ -25,20 +25,22 @@
 
 ## Mapeamento do front-end
 
-Os caminhos da tabela são relativos a `/api/v1`. Todas as 15 operações declaradas nos serviços do front-end têm rota no back-end e no OpenAPI. A interface chama 14 delas. O método `authService.me()` está disponível no cliente e não tem chamador na interface atual.
+Os caminhos abaixo são relativos a `/api/v1`. O OpenAPI cobre as chamadas utilizadas na interface, incluindo estas integrações acrescentadas na revisão final.
 
 | Fluxo | Operações HTTP |
 | --- | --- |
-| Sessão | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` (método disponível) |
+| Sessão | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` (disponível no cliente) |
 | Catálogo público | `GET /public/sectors`, `GET /public/sectors/{id}/services`, `GET /public/shifts` |
 | Pesquisa | `POST /public/surveys`, `POST /public/surveys/{id}/attendances`, `POST /public/surveys/{id}/start` |
 | Questionário e envio | `GET /public/surveys/{id}/questions`, `PUT /public/surveys/{id}/answers/{surveyQuestionId}`, `PUT /public/surveys/{id}/feedback`, `PUT /public/surveys/{id}/return-request`, `POST /public/surveys/{id}/complete` |
-| Dashboard | `GET /admin/dashboard/overview` |
+| Dashboard | `GET /admin/dashboard/overview` e os cinco GETs de dimensão em `/admin/dashboard/` |
+| Propostas e revisão | `GET /questions`, `GET /questions/services`, `POST /questions`, `POST /questions/{id}/approve`, `POST /questions/{id}/reject` |
+| Painel público | `GET /tvwall/overview`, `GET /tvwall/sectors` |
 
 ## Eventos Socket.IO
 
 - Servidores: `https://fhdod-ouvidoria-demo.onrender.com` e `http://localhost:3000`. Caminho padrão do Socket.IO: `/socket.io/`. O front-end configura o endereço em `VITE_SOCKET_URL`.
-- Autenticação atual: o handshake não verifica JWT nem token de pesquisa. O servidor coloca toda conexão aceita na sala `dashboards`. O CORS do Socket.IO usa a mesma lista de origens da API e não substitui autenticação. O GET autenticado do dashboard continua exigindo `dashboard.read`.
+- Autenticação: envie o JWT de acesso no campo `auth.token` do handshake Socket.IO. O servidor verifica validade, origem permitida e permissão `dashboard.read`. A sessão é desconectada ao expirar. A TV consulta apenas as rotas REST públicas de agregados.
 - Evento de aplicação `dashboard:update`, do servidor para o cliente. É emitido ao concluir a pesquisa pela primeira vez enquanto ela permanecer concluída. O front-end invalida a consulta do dashboard e busca os indicadores via REST.
 - Formato: `surveyId` é o UUID da pesquisa; `type` é a string literal `survey_completed`. Não há eventos de aplicação enviados pelo cliente. Eventos como `connect` pertencem à biblioteca.
 
@@ -49,12 +51,10 @@ Os caminhos da tabela são relativos a `/api/v1`. Todas as 15 operações declar
 }
 ```
 
-## Inconsistências e funcionalidades sem rota
+## Regras e funcionalidades pendentes
 
-- Os cinco indicadores do dashboard por dimensão retornam 404 para sessões com permissão. O caminho fixo não injeta `req.params.dimension`.
-- As oito listagens administrativas retornam 404 e os oito POSTs de criação retornam 400 para sessões com permissão. Os caminhos fixos não injetam `req.params.resource`. Uma correção futura deve usar projeções explícitas na listagem de usuários, pois o código atual contém `SELECT *` e a tabela inclui hashes de senha. O ID do INSERT de catálogo também é gerado pelo MySQL com UUID, enquanto o retorno usa `insertId`.
-- Cadastro e aprovação de perguntas, exportações, convites e disparo de notificações não têm endpoints montados. As páginas administrativas correspondentes, a lista de propostas do setor e o Painel de TV do front-end não consomem endpoints para essas telas. O back-end oferece dois GETs independentes para o Painel de TV.
-- Perguntas de pesquisa têm opções e um tipo, mas a API recebe uma nota numérica ou texto, sem validação por tipo. O cliente trata strings como texto e pode enviar um array em `value` para múltipla escolha, que o esquema de persistência não suporta.
-- O resumo do dashboard é global, sem filtros de período. Usa as notas individuais e não a nota geral de encerramento.
-- O front-end não usa `POST /auth/refresh`. O botão de logout revoga o refresh token; o JWT de acesso continua válido até a expiração.
-- O Socket.IO ainda não autentica os assinantes da sala do dashboard. O evento expõe o identificador da pesquisa às conexões aceitas. Use somente dados fictícios neste ambiente.
+- A administração lista oito catálogos com paginação. As cinco criações de catálogo devolvem o UUID real. A criação genérica de usuários, papéis e permissões fica bloqueada.
+- Perguntas de setor são limitadas aos serviços dos setores atribuídos. Aprovação e rejeição exigem permissões distintas e gravam a justificativa. A aprovação ativa a pergunta para novas pesquisas, preservando as perguntas já geradas.
+- Perguntas aceitam nota de 1 a 5, texto livre ou valores das opções cadastradas. Múltipla escolha usa `optionValues`. Após conclusão, as edições ficam bloqueadas e a conclusão é idempotente.
+- O resumo do dashboard é global e usa notas individuais de 1 a 5. A nota geral de encerramento usa outra escala. O painel público usa somente pesquisas concluídas e aplica o mínimo de respostas configurado.
+- Exportações, convites, envio de notificações e telas administrativas de avaliações, feedback e retornos seguem sem integração. O registro público de pedidos de retorno funciona via API. O front-end não usa `POST /auth/refresh`; o logout revoga o refresh token e o JWT de acesso vence no prazo original.

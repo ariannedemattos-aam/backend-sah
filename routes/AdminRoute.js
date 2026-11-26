@@ -1,3 +1,19 @@
+import { Router } from 'express';
+import * as admin from '../controllers/AdminController.js';
+import { authenticate, requirePermission } from '../middlewares/authMiddleware.js';
 import { asyncRoute } from '../utils/asyncRoute.js';
-import { Router } from 'express'; import * as c from '../controllers/AdminController.js'; import { authenticate,requirePermission } from '../middlewares/authMiddleware.js';
-const r=Router();r.use(authenticate);r.get('/dashboard/overview',requirePermission('dashboard.read'), asyncRoute(c.overview));for(const x of ['sectors','services','teams','stages','shifts'])r.get(`/dashboard/${x}`,requirePermission('dashboard.read'), asyncRoute(c.dimensions));for(const x of ['sectors','services','stages','teams','shifts','users','roles','permissions']){r.get(`/${x}`,requirePermission('users.manage'), asyncRoute(c.list));r.post(`/${x}`,requirePermission('users.manage'), asyncRoute(c.create));}export default r;
+
+const router = Router();
+router.use(authenticate);
+const dashboard = requirePermission('dashboard.read');
+const manage = requirePermission('users.manage');
+router.get('/dashboard/overview', dashboard, asyncRoute(admin.overview));
+
+for (const dimension of ['sectors', 'services', 'teams', 'stages', 'shifts']) {
+  router.get('/dashboard/' + dimension, dashboard, asyncRoute((req, res) => admin.dimensions(req, res, dimension)));
+}
+for (const resource of ['sectors', 'services', 'stages', 'teams', 'shifts', 'users', 'roles', 'permissions']) {
+  router.get('/' + resource, manage, asyncRoute((req, res) => admin.list(req, res, resource)));
+  router.post('/' + resource, manage, asyncRoute((req, res) => admin.create(req, res, resource)));
+}
+export default router;
