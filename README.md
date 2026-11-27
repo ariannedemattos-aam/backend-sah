@@ -45,7 +45,7 @@ A suíte unitária verifica regras, contrato OpenAPI e parâmetros. O roteiro de
 7. [Mapeamento e consultas](docs/mapeamento-classes-e-consultas.md)
 8. [Segurança e nuvem](docs/seguranca-e-nuvem.md)
 
-[Diagramas editáveis e SVGs](docs/diagramas/) · [Guia do Swagger](docs/integration.md) · [Kanban retrospectivo](docs/kanban-retrospectivo.md) · [Capturas no frontend](https://github.com/ariannedemattos-aam/Frontend-fhod/tree/deploy/demo/docs/capturas)
+[Diagramas editáveis e SVGs](docs/diagramas/) · [Guia do Swagger](docs/integration.md) · [Kanban retrospectivo no GitHub Projects](https://github.com/users/ariannedemattos-aam/projects/1/views/1) · [Capturas no frontend](https://github.com/ariannedemattos-aam/Frontend-fhod/tree/deploy/demo/docs/capturas)
 
 A demonstração é de uma instituição. A arquitetura pode ser reproduzida para outra em ambiente segregado. O uso institucional e a avaliação manual com leitor de tela exigem validação própria.
 
